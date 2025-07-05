@@ -5,12 +5,14 @@ import AmazonAuth from './auth';
 import config from './config';
 import { createEmptyTransactionData, createTransaction, createItem } from './schemas';
 import { TransactionData, Transaction, BasicTransaction, OrderDetails, Item } from './types';
-import { Page, ElementHandle } from 'playwright';
+import { Page, ElementHandle, Browser, BrowserContext } from 'playwright';
+import { chromium } from 'playwright';
 
 class AmazonScraper {
   private auth: AmazonAuth;
   private transactionData: TransactionData;
   private screenshotCounter: number = 0;
+  private processedOrders: Set<string> = new Set();
 
   constructor() {
     this.auth = new AmazonAuth();
@@ -24,6 +26,64 @@ class AmazonScraper {
     await fs.ensureDir(config.get('output.dataDir'));
     await fs.ensureDir(config.get('output.outputDir'));
     await fs.ensureDir(config.get('output.screenshotsDir'));
+    
+    // Load previously processed orders
+    await this.loadProcessedOrders();
+  }
+
+  async loadProcessedOrders(): Promise<void> {
+    try {
+      console.log('🔍 Loading previously processed orders...');
+      
+      // Check existing JSON files for processed orders
+      const dataDir = config.get('output.dataDir');
+      
+      // Ensure the data directory exists
+      await fs.ensureDir(dataDir);
+      
+      const files = await fs.readdir(dataDir);
+      const jsonFiles = files.filter(f => f.endsWith('.json'));
+      
+      for (const file of jsonFiles) {
+        try {
+          const filePath = path.join(dataDir, file);
+          const data = await fs.readJSON(filePath) as TransactionData;
+          
+          for (const transaction of data.transactions) {
+            if (transaction.orderId) {
+              this.processedOrders.add(transaction.orderId);
+            }
+          }
+        } catch (error) {
+          console.log(`⚠️ Could not read ${file}:`, error instanceof Error ? error.message : String(error));
+        }
+      }
+      
+      // Also check for existing screenshots
+      const screenshotsDir = config.get('output.screenshotsDir');
+      try {
+        const screenshots = await fs.readdir(screenshotsDir);
+        const orderScreenshots = screenshots.filter(f => f.startsWith('order-') && f.endsWith('.png'));
+        
+        for (const screenshot of orderScreenshots) {
+          // Extract order ID from filename: order-D01-1234567-1234567-1.png
+          const match = screenshot.match(/order-([^-]+-\d+-\d+)/);
+          if (match) {
+            this.processedOrders.add(match[1]);
+          }
+        }
+      } catch (error) {
+        // Screenshots directory might not exist yet
+      }
+      
+      console.log(`✅ Found ${this.processedOrders.size} previously processed orders`);
+      if (this.processedOrders.size > 0) {
+        console.log('📋 Sample processed orders:', Array.from(this.processedOrders).slice(0, 3));
+      }
+      
+    } catch (error) {
+      console.log('⚠️ Could not load processed orders:', error instanceof Error ? error.message : String(error));
+    }
   }
 
   async login(email: string, password: string): Promise<boolean> {
@@ -61,37 +121,39 @@ class AmazonScraper {
       
       console.log(`📋 Found ${transactions.length} transactions`);
       
-      // Process each transaction
-      for (let i = 0; i < transactions.length; i++) {
-        const transaction = transactions[i];
-        console.log(`📦 Processing transaction ${i + 1}/${transactions.length}: ${transaction.orderId}`);
-        
-        try {
-          const detailedTransaction = await this.scrapeOrderDetails(transaction);
-          this.transactionData.transactions.push(detailedTransaction);
-          
-          // Add delay between requests to avoid being blocked
-          const page = this.auth.getPage();
-          if (page) {
-            await page.waitForTimeout(config.get('scraping.delayBetweenRequests'));
-          }
-          
-        } catch (error) {
-          console.error(`❌ Error processing transaction ${transaction.orderId}:`, error);
-          // Add the transaction anyway with available data
-          this.transactionData.transactions.push(createTransaction(transaction));
+      // Filter out already processed transactions
+      const newTransactions = transactions.filter(t => {
+        const isProcessed = this.processedOrders.has(t.orderId);
+        if (isProcessed) {
+          console.log(`⏭️ Skipping already processed order: ${t.orderId}`);
         }
+        return !isProcessed;
+      });
+      
+      console.log(`🔄 Processing ${newTransactions.length} new transactions (${transactions.length - newTransactions.length} already processed)`);
+      
+      if (newTransactions.length === 0) {
+        console.log('✅ All transactions already processed!');
+      } else {
+        // Use parallel processing for order details
+        await this.processTransactionsInParallel(newTransactions);
       }
       
       // Update metadata
       this.transactionData.metadata.totalTransactions = this.transactionData.transactions.length;
       this.transactionData.metadata.totalAmount = this.transactionData.transactions.reduce(
-        (sum, t) => sum + (t.total || 0), 0
+        (sum, t) => sum + (t.total || 0) - (t.refund || 0), 0
       );
       this.transactionData.metadata.scrapedAt = new Date().toISOString();
       
+      const totalRefunds = this.transactionData.transactions.reduce(
+        (sum, t) => sum + (t.refund || 0), 0
+      );
+      
       console.log(`✅ Scraped ${this.transactionData.transactions.length} transactions`);
-      console.log(`💰 Total amount: $${this.transactionData.metadata.totalAmount.toFixed(2)}`);
+      console.log(`💰 Total charged: $${this.transactionData.transactions.reduce((sum, t) => sum + (t.total || 0), 0).toFixed(2)}`);
+      console.log(`💚 Total refunds: $${totalRefunds.toFixed(2)}`);
+      console.log(`💰 Net amount: $${this.transactionData.metadata.totalAmount.toFixed(2)}`);
       
       return this.transactionData;
       
@@ -237,11 +299,16 @@ class AmazonScraper {
       
       // If we don't have basic info, try text patterns
       if (!orderId && rowText) {
-        const orderIdMatch = rowText.match(/(D\d{2}-\d{7}-\d{7})/);
+        const orderIdMatch = rowText.match(/(D\d{2}-\d{7}-\d{7}|1\d{2}-\d{7}-\d{7})/);
         if (orderIdMatch) {
           orderId = orderIdMatch[1];
           orderDetailsUrl = `https://www.amazon.com/gp/your-account/order-details?orderID=${orderId}`;
         }
+      }
+
+      // If we have an order ID but no URL, construct the URL
+      if (orderId && !orderDetailsUrl) {
+        orderDetailsUrl = `https://www.amazon.com/gp/your-account/order-details?orderID=${orderId}`;
       }
       
       if (orderId || total > 0) {
@@ -389,12 +456,11 @@ class AmazonScraper {
         if (elementText) {
           // Look for order ID patterns in text (Amazon format)
           const orderIdPatterns = [
-            /order[#\s]*([0-9-]{10,})/i,
-            /transaction[#\s]*([0-9-]{10,})/i,
-            /([0-9]{3}-[0-9]{7}-[0-9]{7})/,           // Standard Amazon order format
-            /(D[A-Z0-9-]{10,})/,                      // Amazon order numbers starting with D
-            /([A-Z][0-9]{2}-[0-9]{7}-[0-9]{7})/,     // Alternative Amazon format
-            /([A-Z0-9]{10,})/                         // General alphanumeric codes
+            /(1\d{2}-\d{7}-\d{7})/,                  // Standard Amazon order format (113-xxx)
+            /(D\d{2}-\d{7}-\d{7})/,                  // Amazon order numbers starting with D
+            /([A-Z]\d{2}-\d{7}-\d{7})/,              // Alternative Amazon format  
+            /order[#\s]*([0-9-]{15,})/i,             // Order references
+            /transaction[#\s]*([0-9-]{15,})/i        // Transaction references
           ];
           
           for (const pattern of orderIdPatterns) {
@@ -440,6 +506,11 @@ class AmazonScraper {
             }
           }
         }
+      }
+      
+      // If we have an order ID but no URL, construct the URL
+      if (orderId && !orderDetailsUrl) {
+        orderDetailsUrl = `https://www.amazon.com/gp/your-account/order-details?orderID=${orderId}`;
       }
       
       // Return transaction data if we found at least some information
@@ -513,6 +584,7 @@ class AmazonScraper {
         date: orderDate || transaction.date,
         total: transaction.total,
         orderScreenshot: screenshotPath,
+        orderDetailsUrl: transaction.orderDetailsUrl,
         ...orderDetails
       });
       
@@ -527,6 +599,7 @@ class AmazonScraper {
         date: transaction.date,
         total: transaction.total,
         orderScreenshot: '',
+        orderDetailsUrl: transaction.orderDetailsUrl,
         items: []
       });
     }
@@ -534,24 +607,15 @@ class AmazonScraper {
 
   async extractOrderDetails(page: Page): Promise<OrderDetails> {
     const orderDetails: OrderDetails = {
-      status: '',
       recipient: '',
       address: {},
       items: [],
       paymentMethod: '',
-      trackingNumber: ''
+      trackingNumber: '',
+      refund: 0.0
     };
     
     try {
-      // Extract order status
-      const statusElement = await page.$('.order-status, .delivery-status, [data-testid="order-status"]');
-      if (statusElement) {
-        const statusText = await statusElement.textContent();
-        if (statusText) {
-          orderDetails.status = statusText.trim();
-        }
-      }
-      
       // Extract recipient and address
       const addressElement = await page.$('.shipping-address, .delivery-address');
       if (addressElement) {
@@ -571,6 +635,44 @@ class AmazonScraper {
         }
       }
       
+      // Extract refund information - look specifically for "Refund Total"
+      const refundTotalElements = await page.$$('span, div, td');
+      for (const element of refundTotalElements) {
+        const text = await element.textContent();
+        if (text && text.trim() === 'Refund Total') {
+          console.log(`🔍 Found "Refund Total" text element`);
+          
+          // Look for the refund amount near this element
+          const parent = await element.evaluateHandle(el => el.parentElement);
+          if (parent) {
+            const parentText = await parent.textContent();
+            if (parentText) {
+              const refundMatch = parentText.match(/\$([,\d]+\.?\d*)/);
+              if (refundMatch) {
+                orderDetails.refund = parseFloat(refundMatch[1].replace(',', ''));
+                console.log(`📈 Found refund amount from "Refund Total": $${orderDetails.refund}`);
+                break;
+              }
+            }
+          }
+          
+          // Also check siblings
+          const siblings = await element.evaluateHandle(el => el.parentElement?.children);
+          if (siblings) {
+            const siblingTexts = await siblings.evaluate(children => {
+              const elements = Array.from(children as any);
+              return elements.map((child: any) => child.textContent || '').join(' ');
+            });
+            const refundMatch = siblingTexts.match(/\$([,\d]+\.?\d*)/);
+            if (refundMatch) {
+              orderDetails.refund = parseFloat(refundMatch[1].replace(',', ''));
+              console.log(`📈 Found refund amount from siblings: $${orderDetails.refund}`);
+              break;
+            }
+          }
+        }
+      }
+
       // Extract items
       const itemElements = await page.$$('.order-item, .item-row, [data-testid="order-item"]');
       
@@ -644,6 +746,392 @@ class AmazonScraper {
     await fs.writeJSON(filePath, this.transactionData, { spaces: 2 });
     console.log(`💾 Data saved to ${filePath}`);
     return filePath;
+  }
+
+  async processTransactionsInParallel(transactions: BasicTransaction[]): Promise<void> {
+    const PARALLEL_BROWSERS = 4;
+    const browsers: Browser[] = [];
+    const contexts: BrowserContext[] = [];
+    
+    try {
+      console.log(`🚀 Starting ${PARALLEL_BROWSERS} browser instances for parallel processing...`);
+      
+      // Create multiple browser instances
+      for (let i = 0; i < PARALLEL_BROWSERS; i++) {
+        const browser = await chromium.launch({
+          headless: config.get('scraping.headless'),
+          slowMo: 100
+        });
+        browsers.push(browser);
+        
+        const context = await browser.newContext({
+          viewport: { width: 1280, height: 720 },
+          userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+        });
+        contexts.push(context);
+        
+        // Copy cookies from main session to each browser
+        const mainPage = this.auth.getPage();
+        if (mainPage) {
+          const cookies = await mainPage.context().cookies();
+          await context.addCookies(cookies);
+        }
+      }
+      
+      // Divide transactions among browsers
+      const chunks = this.chunkArray(transactions, PARALLEL_BROWSERS);
+      console.log(`📦 Divided ${transactions.length} transactions into ${chunks.length} chunks`);
+      
+      // Process chunks in parallel
+      const promises = chunks.map(async (chunk, index) => {
+        if (chunk.length === 0) return [];
+        
+        const context = contexts[index];
+        const page = await context.newPage();
+        
+        console.log(`🏭 Browser ${index + 1}: Processing ${chunk.length} transactions`);
+        const results: Transaction[] = [];
+        
+        for (let i = 0; i < chunk.length; i++) {
+          const transaction = chunk[i];
+          try {
+            console.log(`🏭 Browser ${index + 1}: Processing ${i + 1}/${chunk.length} - ${transaction.orderId}`);
+            const detailedTransaction = await this.scrapeOrderDetailsWithPage(transaction, page, index + 1);
+            results.push(detailedTransaction);
+            
+            // Mark as processed
+            this.processedOrders.add(transaction.orderId);
+            
+            // Small delay between requests
+            await page.waitForTimeout(1000);
+            
+          } catch (error) {
+            console.error(`❌ Browser ${index + 1} error processing ${transaction.orderId}:`, error);
+            // Add basic transaction data as fallback
+            results.push(createTransaction(transaction));
+          }
+        }
+        
+        return results;
+      });
+      
+      // Wait for all parallel processing to complete
+      const allResults = await Promise.all(promises);
+      
+      // Combine results
+      for (const results of allResults) {
+        this.transactionData.transactions.push(...results);
+      }
+      
+      console.log(`✅ Parallel processing complete! Processed ${transactions.length} transactions using ${PARALLEL_BROWSERS} browsers`);
+      
+    } finally {
+      // Clean up browsers
+      console.log('🧹 Cleaning up browser instances...');
+      for (const browser of browsers) {
+        try {
+          await browser.close();
+        } catch (error) {
+          console.error('Error closing browser:', error);
+        }
+      }
+    }
+  }
+
+  private chunkArray<T>(array: T[], chunks: number): T[][] {
+    const result: T[][] = [];
+    const chunkSize = Math.ceil(array.length / chunks);
+    
+    for (let i = 0; i < array.length; i += chunkSize) {
+      result.push(array.slice(i, i + chunkSize));
+    }
+    
+    // Ensure we have exactly the requested number of chunks (some may be empty)
+    while (result.length < chunks) {
+      result.push([]);
+    }
+    
+    return result;
+  }
+
+  async scrapeOrderDetailsWithPage(transaction: BasicTransaction, page: Page, browserIndex: number): Promise<Transaction> {
+    try {
+      console.log(`  🏭 Browser ${browserIndex}: Scraping details for order ${transaction.orderId}`);
+      
+      // Navigate to order details page
+      if (transaction.orderDetailsUrl) {
+        await page.goto(transaction.orderDetailsUrl);
+        await page.waitForLoadState('networkidle');
+      }
+      
+      // Take screenshot of order page (idempotent filename)
+      const screenshotPath = path.join(
+        config.get('output.screenshotsDir'), 
+        `order-${transaction.orderId}.png`
+      );
+      
+      // Only take screenshot if it doesn't already exist
+      if (!await fs.pathExists(screenshotPath)) {
+        await this.takeSmartOrderScreenshot(page, screenshotPath);
+        console.log(`  📸 Browser ${browserIndex}: Screenshot saved: ${screenshotPath}`);
+      } else {
+        console.log(`  📸 Browser ${browserIndex}: Screenshot already exists: ${screenshotPath}`);
+      }
+      
+      // Extract detailed order information including date
+      const orderDetails = await this.extractOrderDetailsWithPage(page);
+      
+      // Extract date from order page if not already present
+      let orderDate = transaction.date;
+      if (!orderDate) {
+        const bodyText = await page.textContent('body') || '';
+        const datePatterns = [
+          /((?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]* \d{1,2}, \d{4})/i,
+          /(\d{1,2}\/\d{1,2}\/\d{4})/,
+          /(\d{4}-\d{2}-\d{2})/
+        ];
+        
+        for (const pattern of datePatterns) {
+          const match = bodyText.match(pattern);
+          if (match) {
+            orderDate = match[1];
+            console.log(`  📅 Browser ${browserIndex}: Extracted date from order page: ${orderDate}`);
+            break;
+          }
+        }
+      }
+      
+      // Create detailed transaction object
+      const detailedTransaction = createTransaction({
+        orderId: transaction.orderId,
+        date: orderDate || transaction.date,
+        total: transaction.total,
+        orderScreenshot: screenshotPath,
+        orderDetailsUrl: transaction.orderDetailsUrl,
+        ...orderDetails
+      });
+      
+      return detailedTransaction;
+      
+    } catch (error) {
+      console.error(`❌ Browser ${browserIndex} error scraping order details for ${transaction.orderId}:`, error);
+      
+      // Return basic transaction data if detailed scraping fails
+      return createTransaction({
+        orderId: transaction.orderId,
+        date: transaction.date,
+        total: transaction.total,
+        orderScreenshot: '',
+        orderDetailsUrl: transaction.orderDetailsUrl,
+        items: []
+      });
+    }
+  }
+
+  async extractOrderDetailsWithPage(page: Page): Promise<OrderDetails> {
+    const orderDetails: OrderDetails = {
+      recipient: '',
+      address: {},
+      items: [],
+      paymentMethod: '',
+      trackingNumber: '',
+      refund: 0.0
+    };
+    
+    try {
+      // Extract recipient and address
+      const addressElement = await page.$('.shipping-address, .delivery-address');
+      if (addressElement) {
+        const addressText = await addressElement.textContent();
+        if (addressText) {
+          orderDetails.recipient = addressText.split('\n')[0].trim();
+          orderDetails.address = { full: addressText.trim() };
+        }
+      }
+      
+      // Extract payment method
+      const paymentElement = await page.$('.payment-method, .payment-info');
+      if (paymentElement) {
+        const paymentText = await paymentElement.textContent();
+        if (paymentText) {
+          orderDetails.paymentMethod = paymentText.trim();
+        }
+      }
+      
+      // Extract refund information - look specifically for "Refund Total"
+      const refundTotalElements = await page.$$('span, div, td');
+      for (const element of refundTotalElements) {
+        const text = await element.textContent();
+        if (text && text.trim() === 'Refund Total') {
+          console.log(`🔍 Found "Refund Total" text element`);
+          
+          // Look for the refund amount near this element
+          const parent = await element.evaluateHandle(el => el.parentElement);
+          if (parent) {
+            const parentText = await parent.textContent();
+            if (parentText) {
+              const refundMatch = parentText.match(/\$([,\d]+\.?\d*)/);
+              if (refundMatch) {
+                orderDetails.refund = parseFloat(refundMatch[1].replace(',', ''));
+                console.log(`📈 Found refund amount from "Refund Total": $${orderDetails.refund}`);
+                break;
+              }
+            }
+          }
+          
+          // Also check siblings
+          const siblings = await element.evaluateHandle(el => el.parentElement?.children);
+          if (siblings) {
+            const siblingTexts = await siblings.evaluate(children => {
+              const elements = Array.from(children as any);
+              return elements.map((child: any) => child.textContent || '').join(' ');
+            });
+            const refundMatch = siblingTexts.match(/\$([,\d]+\.?\d*)/);
+            if (refundMatch) {
+              orderDetails.refund = parseFloat(refundMatch[1].replace(',', ''));
+              console.log(`📈 Found refund amount from siblings: $${orderDetails.refund}`);
+              break;
+            }
+          }
+        }
+      }
+
+      // Extract items
+      const itemElements = await page.$$('.order-item, .item-row, [data-testid="order-item"]');
+      
+      for (const itemElement of itemElements) {
+        try {
+          const item = await this.extractItemDetailsWithElement(itemElement);
+          if (item) {
+            orderDetails.items.push(item);
+          }
+        } catch (error) {
+          console.error('Error extracting item details:', error);
+        }
+      }
+      
+    } catch (error) {
+      console.error('Error extracting order details:', error);
+    }
+    
+    return orderDetails;
+  }
+
+  async extractItemDetailsWithElement(itemElement: ElementHandle): Promise<Item | null> {
+    try {
+      const nameElement = await itemElement.$('.product-title, .item-title, a[href*="/dp/"]');
+      const priceElement = await itemElement.$('.price, .item-price, .cost');
+      const imageElement = await itemElement.$('img');
+      
+      let name = '';
+      if (nameElement) {
+        const nameText = await nameElement.textContent();
+        if (nameText) {
+          name = nameText.trim();
+        }
+      }
+      
+      let price = 0;
+      if (priceElement) {
+        const priceText = await priceElement.textContent();
+        if (priceText) {
+          const priceMatch = priceText.match(/\$?([\d,]+\.?\d*)/);
+          if (priceMatch) {
+            price = parseFloat(priceMatch[1].replace(',', ''));
+          }
+        }
+      }
+      
+      let imageUrl = '';
+      if (imageElement) {
+        const src = await imageElement.getAttribute('src');
+        if (src) {
+          imageUrl = src;
+        }
+      }
+      
+      return createItem({
+        name,
+        price,
+        quantity: 1,
+        seller: '',
+        imageUrl,
+        productUrl: ''
+      });
+      
+    } catch (error) {
+      console.error('Error extracting item details:', error);
+      return null;
+    }
+  }
+
+  async takeSmartOrderScreenshot(page: Page, screenshotPath: string): Promise<void> {
+    try {
+      // First, check for "Refund Total" elements and hover over them to show tooltips
+      const refundTotalElements = await page.$$('span, div, td');
+      let foundRefundTotal = false;
+      
+      for (const element of refundTotalElements) {
+        const text = await element.textContent();
+        if (text && text.trim() === 'Refund Total') {
+          console.log(`  💡 Found "Refund Total" - hovering to capture tooltip`);
+          foundRefundTotal = true;
+          
+          // Hover over the element to trigger any tooltips
+          await element.hover();
+          await page.waitForTimeout(1000); // Wait for tooltip to appear
+          break;
+        }
+      }
+      
+      if (foundRefundTotal) {
+        console.log(`  📸 Taking screenshot with refund tooltip visible`);
+      }
+      
+      // Look for the main order content container
+      const cardElement = await page.$('.a-cardui, .order-details, .order-info');
+      
+      if (cardElement) {
+        // Check if the element extends beyond the current viewport
+        const elementBox = await cardElement.boundingBox();
+        const viewport = page.viewportSize();
+        
+        if (elementBox && viewport) {
+          const elementBottom = elementBox.y + elementBox.height;
+          const viewportBottom = viewport.height;
+          
+          // If element extends beyond viewport, scroll to show it completely
+          if (elementBottom > viewportBottom) {
+            console.log(`  📏 Element extends beyond viewport, scrolling to capture full content`);
+            await cardElement.evaluate(element => element.scrollIntoView());
+            await page.waitForTimeout(500); // Wait for scroll to complete
+            
+            // Re-hover over refund total after scrolling if it was found
+            if (foundRefundTotal) {
+              for (const element of refundTotalElements) {
+                const text = await element.textContent();
+                if (text && text.trim() === 'Refund Total') {
+                  await element.hover();
+                  await page.waitForTimeout(500);
+                  break;
+                }
+              }
+            }
+          }
+        }
+        
+        // Take screenshot of just the element
+        await cardElement.screenshot({ path: screenshotPath });
+      } else {
+        console.log(`  📸 No .a-cardui element found, taking viewport screenshot`);
+        // Fallback to viewport screenshot if no card element found
+        await page.screenshot({ path: screenshotPath });
+      }
+    } catch (error) {
+      console.error(`Error taking smart screenshot: ${error}`);
+      // Fallback to basic screenshot
+      await page.screenshot({ path: screenshotPath });
+    }
   }
 
   async close(): Promise<void> {

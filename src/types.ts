@@ -16,7 +16,7 @@ export interface Transaction {
   orderId: string;
   date: string;
   total: number;
-  status: string;
+  refund: number;
   recipient: string;
   address: Address;
   items: Item[];
@@ -74,10 +74,10 @@ export interface BasicTransaction {
 }
 
 export interface OrderDetails {
-  status: string;
   recipient: string;
   address: Address;
   items: Item[];
   paymentMethod: string;
   trackingNumber: string;
+  refund: number;
 }

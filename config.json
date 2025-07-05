@@ -1,0 +1,22 @@
+{
+  "amazon": {
+    "email": "",
+    "baseUrl": "https://www.amazon.com",
+    "paymentsUrl": "https://www.amazon.com/cpe/yourpayments/transactions",
+    "orderUrlPattern": "https://www.amazon.com/gp/your-account/order-details"
+  },
+  "scraping": {
+    "headless": false,
+    "timeout": 30000,
+    "delayBetweenRequests": 2000,
+    "maxRetries": 3
+  },
+  "output": {
+    "dataDir": "./output/data",
+    "outputDir": "./output",
+    "screenshotsDir": "./output/screenshots"
+  },
+  "dateRange": {
+    "defaultDays": 90
+  }
+}

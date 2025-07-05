@@ -27,7 +27,7 @@ export function createTransaction(data: Partial<Transaction>): Transaction {
     orderId: data.orderId || '',
     date: data.date || '',
     total: data.total || 0.0,
-    status: data.status || 'unknown',
+    refund: data.refund || 0.0,
     recipient: data.recipient || '',
     address: data.address || {},
     items: data.items || [],
@@ -69,11 +69,11 @@ export function createAddress(data: Partial<Address>): Address {
  */
 export function createOrderDetails(data: Partial<OrderDetails>): OrderDetails {
   return {
-    status: data.status || 'unknown',
     recipient: data.recipient || '',
     address: data.address || {},
     items: data.items || [],
     paymentMethod: data.paymentMethod || '',
-    trackingNumber: data.trackingNumber || ''
+    trackingNumber: data.trackingNumber || '',
+    refund: data.refund || 0.0
   };
 }

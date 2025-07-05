@@ -94,6 +94,8 @@ class HTMLGenerator {
   createTransactionHTML(transaction: Transaction): string {
     const formattedDate = this.formatDate(transaction.date);
     const hasItems = transaction.items && transaction.items.length > 0;
+    const hasRefund = transaction.refund > 0;
+    const amountClass = hasRefund ? 'order-amount-refunded' : 'order-amount-charged';
     
     return `
         <div class="transaction" data-order-id="${transaction.orderId}">
@@ -102,14 +104,23 @@ class HTMLGenerator {
                     <div class="order-info">
                         <div class="order-id">${transaction.orderId}</div>
                         <div class="order-date">${formattedDate}</div>
-                        <div class="order-status ${transaction.status.toLowerCase().replace(' ', '-')}">${transaction.status}</div>
                     </div>
-                    <div class="order-amount">$${transaction.total.toFixed(2)}</div>
+                    <div class="order-amount-container">
+                        <div class="order-amount ${amountClass}">$${transaction.total.toFixed(2)}</div>
+                        ${hasRefund ? `<div class="refund-amount">Refund: $${transaction.refund.toFixed(2)}</div>` : ''}
+                    </div>
                 </div>
                 <div class="expand-icon">▼</div>
             </div>
             
             <div class="transaction-details" id="details-${transaction.orderId}">
+                ${transaction.orderDetailsUrl ? `
+                    <div class="order-link">
+                        <a href="${transaction.orderDetailsUrl}" target="_blank" rel="noopener noreferrer" class="amazon-link">
+                            📦 View Order on Amazon
+                        </a>
+                    </div>
+                ` : ''}
                 ${transaction.recipient ? `<div class="recipient">Delivered to: ${transaction.recipient}</div>` : ''}
                 ${transaction.address.full ? `<div class="address">${transaction.address.full}</div>` : ''}
                 ${transaction.paymentMethod ? `<div class="payment-method">Payment: ${transaction.paymentMethod}</div>` : ''}
@@ -127,7 +138,7 @@ class HTMLGenerator {
                 ${transaction.orderScreenshot ? `
                     <div class="screenshot-section">
                         <h4>Order Screenshot:</h4>
-                        <img src="${transaction.orderScreenshot}" alt="Order ${transaction.orderId}" class="order-screenshot" onclick="openImageModal(this.src)">
+                        <img src="${this.getRelativePath(transaction.orderScreenshot)}" alt="Order ${transaction.orderId}" class="order-screenshot" onclick="openImageModal(this.src)">
                     </div>
                 ` : ''}
             </div>
@@ -169,6 +180,31 @@ class HTMLGenerator {
     } catch (error) {
       return dateString; // Return original if parsing fails
     }
+  }
+
+  getRelativePath(absolutePath: string): string {
+    // Convert absolute paths to relative paths for HTML
+    // Screenshots are in ./output/screenshots/ and HTML is in ./output/
+    // So we need to remove the ./output/ prefix and make it relative
+    
+    if (absolutePath.includes('output/screenshots/')) {
+      // Extract just the filename and make it relative to screenshots folder
+      const filename = path.basename(absolutePath);
+      return `screenshots/${filename}`;
+    }
+    
+    if (absolutePath.includes('screenshots/')) {
+      // Already relative or contains screenshots path
+      return absolutePath.replace(/.*screenshots\//, 'screenshots/');
+    }
+    
+    // If it's just a filename, assume it's in screenshots
+    if (!absolutePath.includes('/')) {
+      return `screenshots/${absolutePath}`;
+    }
+    
+    // Default: return as-is
+    return absolutePath;
   }
 
   getCSS(): string {
@@ -303,33 +339,30 @@ class HTMLGenerator {
             font-size: 0.9em;
         }
 
-        .order-status {
-            padding: 4px 8px;
-            border-radius: 4px;
-            font-size: 0.8em;
-            font-weight: 500;
-            width: fit-content;
-        }
-
-        .order-status.delivered {
-            background: #d4edda;
-            color: #155724;
-        }
-
-        .order-status.shipped {
-            background: #fff3cd;
-            color: #856404;
-        }
-
-        .order-status.cancelled {
-            background: #f8d7da;
-            color: #721c24;
+        .order-amount-container {
+            display: flex;
+            flex-direction: column;
+            align-items: flex-end;
         }
 
         .order-amount {
             font-weight: bold;
             font-size: 1.2em;
-            color: #007600;
+        }
+
+        .order-amount-charged {
+            color: #dc3545; /* Red for charges */
+        }
+
+        .order-amount-refunded {
+            color: #28a745; /* Green for refunded orders */
+        }
+
+        .refund-amount {
+            font-size: 0.9em;
+            color: #28a745;
+            font-weight: 500;
+            margin-top: 2px;
         }
 
         .expand-icon {
@@ -352,6 +385,28 @@ class HTMLGenerator {
         .transaction.expanded .transaction-details {
             max-height: 2000px;
             padding: 20px;
+        }
+
+        .order-link {
+            margin-bottom: 15px;
+        }
+
+        .amazon-link {
+            display: inline-block;
+            padding: 8px 16px;
+            background: #ff9900;
+            color: white;
+            text-decoration: none;
+            border-radius: 4px;
+            font-weight: 500;
+            font-size: 0.9em;
+            transition: background-color 0.2s ease;
+        }
+
+        .amazon-link:hover {
+            background: #e68900;
+            text-decoration: none;
+            color: white;
         }
 
         .recipient, .address, .payment-method, .tracking {

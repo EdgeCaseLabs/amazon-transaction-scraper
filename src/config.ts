@@ -4,11 +4,10 @@ import { ConfigData } from './types';
 
 class Config {
   private configPath: string;
-  private data: ConfigData;
+  private data!: ConfigData;
 
   constructor() {
     this.configPath = path.join(__dirname, '..', 'config.json');
-    this.data = this.getDefaultConfig();
     this.load();
   }
 
@@ -18,38 +17,12 @@ class Config {
         const data = fs.readFileSync(this.configPath, 'utf8');
         this.data = JSON.parse(data) as ConfigData;
       } else {
-        this.data = this.getDefaultConfig();
-        this.save();
+        throw new Error(`Config file not found: ${this.configPath}. Please ensure config.json exists in the project root.`);
       }
     } catch (error) {
       console.error('Error loading config:', error);
-      this.data = this.getDefaultConfig();
+      throw error;
     }
-  }
-
-  private getDefaultConfig(): ConfigData {
-    return {
-      amazon: {
-        email: '',
-        baseUrl: 'https://www.amazon.com',
-        paymentsUrl: 'https://www.amazon.com/cpe/yourpayments/transactions',
-        orderUrlPattern: 'https://www.amazon.com/gp/your-account/order-details'
-      },
-      scraping: {
-        headless: false,
-        timeout: 30000,
-        delayBetweenRequests: 2000,
-        maxRetries: 3
-      },
-      output: {
-        dataDir: './data',
-        outputDir: './output',
-        screenshotsDir: './screenshots'
-      },
-      dateRange: {
-        defaultDays: 90
-      }
-    };
   }
 
   public save(): void {

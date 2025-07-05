@@ -8,8 +8,10 @@ A TypeScript-based tool to scrape Amazon transaction data and generate human-rea
 - **Transaction Scraping**: Extracts transaction data from Amazon's payments page
 - **Order Details**: Scrapes individual order pages for detailed product information
 - **Product Images**: Captures product images and order screenshots
+- **Refund Tracking**: Accurately detects "Refund Total" amounts and captures hover tooltips in screenshots
+- **Direct Amazon Links**: Includes clickable links to view orders directly on Amazon
 - **JSON Export**: Saves all data in structured JSON format
-- **HTML Reports**: Generates beautiful, interactive HTML reports
+- **HTML Reports**: Generates beautiful, interactive HTML reports with color-coded charges
 - **Date Filtering**: Specify custom date ranges (default: 90 days)
 - **TypeScript**: Full type safety and modern development experience
 
@@ -41,7 +43,7 @@ pnpm start -- -e your@email.com -o quarterly-report
 ### Generate HTML from Existing JSON
 
 ```bash
-pnpm start -- --generate data/transactions-2024-07-05.json
+pnpm start -- --generate output/data/transactions-2024-07-05.json
 ```
 
 ### Command Line Options
@@ -72,10 +74,11 @@ pnpm run dev
 
 ```
 amazon-scraper/
-├── data/           # JSON data files
-├── output/         # HTML reports
-├── screenshots/    # Order screenshots
-└── config.json     # Configuration file
+├── output/
+│   ├── data/           # JSON data files
+│   ├── screenshots/    # Order screenshots  
+│   └── *.html          # HTML reports
+└── config.json         # Configuration file
 ```
 
 ## Configuration
@@ -97,9 +100,9 @@ The tool creates a `config.json` file with default settings:
     "maxRetries": 3
   },
   "output": {
-    "dataDir": "./data",
+    "dataDir": "./output/data",
     "outputDir": "./output",
-    "screenshotsDir": "./screenshots"
+    "screenshotsDir": "./output/screenshots"
   },
   "dateRange": {
     "defaultDays": 90
@@ -127,8 +130,9 @@ The tool creates a `config.json` file with default settings:
       "orderId": "123-456-789",
       "date": "2024-01-15",
       "total": 45.99,
-      "status": "delivered",
+      "refund": 0.00,
       "recipient": "John Doe",
+      "orderDetailsUrl": "https://www.amazon.com/gp/your-account/order-details?orderID=123-456-789",
       "items": [
         {
           "name": "Product Name",
@@ -137,7 +141,7 @@ The tool creates a `config.json` file with default settings:
           "imageUrl": "path/to/image.jpg"
         }
       ],
-      "orderScreenshot": "screenshots/order-123.png"
+      "orderScreenshot": "output/screenshots/order-123.png"
     }
   ]
 }
