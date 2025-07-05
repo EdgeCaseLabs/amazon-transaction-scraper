@@ -312,12 +312,14 @@ class AmazonScraper {
       }
       
       if (orderId || total > 0) {
-        return {
+        const result = {
           orderId: orderId || `unknown-${Date.now()}`,
           date: '', // Will be filled from order page
           total,
           orderDetailsUrl
         };
+        console.log(`🔗 Basic transaction URL: ${orderDetailsUrl}`);
+        return result;
       }
       
       return null;
@@ -579,6 +581,7 @@ class AmazonScraper {
       }
       
       // Create detailed transaction object
+      console.log(`🔗 Creating detailed transaction with URL: ${transaction.orderDetailsUrl}`);
       const detailedTransaction = createTransaction({
         orderId: transaction.orderId,
         date: orderDate || transaction.date,
@@ -588,6 +591,7 @@ class AmazonScraper {
         ...orderDetails
       });
       
+      console.log(`🔗 Final transaction URL: ${detailedTransaction.orderDetailsUrl}`);
       return detailedTransaction;
       
     } catch (error) {
@@ -902,6 +906,7 @@ class AmazonScraper {
       }
       
       // Create detailed transaction object
+      console.log(`🔗 Creating detailed transaction with URL: ${transaction.orderDetailsUrl}`);
       const detailedTransaction = createTransaction({
         orderId: transaction.orderId,
         date: orderDate || transaction.date,
@@ -911,6 +916,7 @@ class AmazonScraper {
         ...orderDetails
       });
       
+      console.log(`🔗 Final transaction URL: ${detailedTransaction.orderDetailsUrl}`);
       return detailedTransaction;
       
     } catch (error) {

@@ -33,7 +33,8 @@ export function createTransaction(data: Partial<Transaction>): Transaction {
     items: data.items || [],
     orderScreenshot: data.orderScreenshot || '',
     paymentMethod: data.paymentMethod || '',
-    trackingNumber: data.trackingNumber || ''
+    trackingNumber: data.trackingNumber || '',
+    orderDetailsUrl: data.orderDetailsUrl || ''
   };
 }
 
