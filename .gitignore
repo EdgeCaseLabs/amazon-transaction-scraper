@@ -1,0 +1,12 @@
+node_modules/
+dist/
+*.log
+.env
+config.json
+data/
+output/
+screenshots/
+.DS_Store
+*.tgz
+*.tar.gz
+.password

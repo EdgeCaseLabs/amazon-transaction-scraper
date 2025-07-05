@@ -1,0 +1,25 @@
+{
+  "name": "amazon-transaction-scraper",
+  "version": "1.0.0",
+  "description": "Scrape Amazon transactions and generate human-readable reports",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "pnpm run build && node dist/index.js",
+    "scrape": "pnpm run build && node dist/scraper.js",
+    "generate": "pnpm run build && node dist/generator.js",
+    "dev": "ts-node src/index.ts"
+  },
+  "dependencies": {
+    "playwright": "^1.44.0",
+    "fs-extra": "^11.2.0",
+    "date-fns": "^3.6.0"
+  },
+  "devDependencies": {
+    "dotenv": "^16.4.5",
+    "typescript": "^5.4.5",
+    "ts-node": "^10.9.2",
+    "@types/node": "^20.12.7",
+    "@types/fs-extra": "^11.0.4"
+  }
+}
