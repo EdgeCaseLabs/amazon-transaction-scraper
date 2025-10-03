@@ -4,9 +4,14 @@ import * as fs from 'fs-extra';
 import * as path from 'path';
 import * as readline from 'readline';
 import { format } from 'date-fns';
+import { execSync } from 'child_process';
+import * as dotenv from 'dotenv';
 import AmazonScraper from './scraper';
 import HTMLGenerator from './generator';
 import config from './config';
+
+// Load environment variables from .env file
+dotenv.config();
 
 interface CommandLineArgs {
   email?: string;
@@ -14,6 +19,50 @@ interface CommandLineArgs {
   outputName?: string;
   generateOnly?: string;
   help?: boolean;
+}
+
+/**
+ * Resolve a 1Password secret reference using the op CLI
+ * @param reference - The op:// reference string
+ * @param account - The 1Password account to use (default: "my")
+ * @returns The resolved secret value
+ */
+function resolve1PasswordSecret(reference: string, account: string = 'my'): string | null {
+  if (!reference || !reference.startsWith('op://')) {
+    return reference; // Not a 1Password reference, return as-is
+  }
+
+  try {
+    console.log(`🔐 Resolving 1Password secret: ${reference.substring(0, 30)}...`);
+    const result = execSync(`op read "${reference}" --account "${account}"`, { encoding: 'utf-8' }).trim();
+    console.log(`✅ Secret resolved successfully`);
+    return result;
+  } catch (error) {
+    console.error(`❌ Failed to resolve 1Password secret: ${reference}`);
+    console.error(`   Make sure you're signed in to 1Password CLI (run: op signin --account ${account})`);
+    return null;
+  }
+}
+
+/**
+ * Get credentials from environment variables or 1Password
+ */
+function getCredentials(): { email: string | null; password: string | null; otp: string | null } {
+  const account = process.env.OP_ACCOUNT || 'my';
+  const emailRef = process.env.AMAZON_EMAIL || process.env.AMAZON_USERNAME;
+  const passwordRef = process.env.AMAZON_PASSWORD;
+  let otpRef = process.env.AMAZON_OTP;
+
+  // Automatically append ?attribute=otp to OTP references if it's an op:// reference
+  if (otpRef && otpRef.startsWith('op://') && !otpRef.includes('?attribute=otp')) {
+    otpRef = otpRef + '?attribute=otp';
+  }
+
+  return {
+    email: emailRef ? resolve1PasswordSecret(emailRef, account) : null,
+    password: passwordRef ? resolve1PasswordSecret(passwordRef, account) : null,
+    otp: otpRef ? resolve1PasswordSecret(otpRef, account) : null
+  };
 }
 
 function parseArgs(): CommandLineArgs {
@@ -69,7 +118,27 @@ Examples:
   pnpm start -- --generate data/transactions-2024-07-05.json
   pnpm start -- -e user@example.com -o quarterly-report
 
-Note: Password will be prompted securely and will not appear in bash history.
+Environment Variables (optional):
+  Store credentials in .env file to avoid manual entry:
+
+  OP_ACCOUNT           1Password account to use (default: "my")
+  AMAZON_EMAIL         Email address (can use op:// reference)
+  AMAZON_PASSWORD      Password (can use op:// reference)
+  AMAZON_OTP           One-time password (can use op:// reference)
+
+1Password CLI Integration:
+  Use op:// references in .env to securely fetch credentials:
+
+  OP_ACCOUNT=my
+  AMAZON_EMAIL=op://vault/item-id/username
+  AMAZON_PASSWORD=op://vault/item-id/password
+  AMAZON_OTP=op://vault/item-id/one-time password
+
+  Copy .env.sample to .env and update with your 1Password references.
+  Make sure you're signed in: op signin --account my
+  Note: ?attribute=otp is automatically appended to OTP references.
+
+Note: Password will be prompted securely if not provided via environment.
 `);
 }
 
@@ -84,7 +153,7 @@ async function promptPassword(): Promise<string> {
       rl.close();
       resolve(password);
     });
-    
+
     // Only hide password input if we're in an interactive terminal
     if (process.stdin.isTTY && process.stdout.isTTY) {
       // Hide password input
@@ -97,6 +166,20 @@ async function promptPassword(): Promise<string> {
         }
       };
     }
+  });
+}
+
+async function promptOTP(): Promise<string> {
+  const rl = readline.createInterface({
+    input: process.stdin,
+    output: process.stdout
+  });
+
+  return new Promise((resolve) => {
+    rl.question('OTP Code (if required, or press Enter to skip): ', (otp: string) => {
+      rl.close();
+      resolve(otp.trim());
+    });
   });
 }
 
@@ -128,26 +211,45 @@ async function main(): Promise<void> {
       return;
     }
     
-    // Scrape transactions
-    if (!args.email) {
+    // Get credentials from environment/1Password
+    const envCreds = getCredentials();
+
+    // Use email from args or environment
+    const email = args.email || envCreds.email;
+    if (!email) {
       console.error('❌ Email is required for scraping');
+      console.log('Provide via --email flag or AMAZON_EMAIL in .env file');
       console.log('Use --help for usage information');
       process.exit(1);
     }
 
-    // Prompt for password securely
-    console.log('🔐 Enter your Amazon credentials:');
-    const password = await promptPassword();
-    console.log(); // Add newline after password input
-    
+    // Get password - from environment or prompt
+    let password = envCreds.password;
+    if (!password) {
+      console.log('🔐 Enter your Amazon credentials:');
+      password = await promptPassword();
+      console.log(); // Add newline after password input
+    } else {
+      console.log('✅ Using password from environment/1Password');
+    }
+
+    // Get OTP - from environment or prompt
+    let otpCode = envCreds.otp;
+    if (!otpCode) {
+      otpCode = await promptOTP();
+      console.log(); // Add newline after OTP input
+    } else {
+      console.log('✅ Using OTP from environment/1Password');
+    }
+
     const scraper = new AmazonScraper();
-    
+
     try {
       console.log('🚀 Initializing Amazon scraper...');
       await scraper.initialize();
-      
+
       console.log('🔐 Logging in to Amazon...');
-      const loginSuccess = await scraper.login(args.email, password);
+      const loginSuccess = await scraper.login(email, password, otpCode);
       
       if (!loginSuccess) {
         console.error('❌ Login failed. Please check your credentials.');

@@ -5,6 +5,7 @@ A TypeScript-based tool to scrape Amazon transaction data and generate human-rea
 ## Features
 
 - **Secure Authentication**: Handles Amazon login with 2FA support
+- **1Password Integration**: Use `op://` references to securely fetch credentials
 - **Transaction Scraping**: Extracts transaction data from Amazon's payments page
 - **Order Details**: Scrapes individual order pages for detailed product information
 - **Product Images**: Captures product images and order screenshots
@@ -45,6 +46,44 @@ pnpm start -- -e your@email.com -o quarterly-report
 ```bash
 pnpm start -- --generate output/data/transactions-2024-07-05.json
 ```
+
+### Using 1Password CLI (Optional)
+
+For secure credential management without manual entry:
+
+1. **Setup 1Password CLI**:
+   ```bash
+   # Install 1Password CLI
+   brew install 1password-cli
+
+   # Sign in
+   op signin
+   ```
+
+2. **Create .env file**:
+   ```bash
+   # Copy the sample
+   cp .env.sample .env
+
+   # Edit with your 1Password references
+   nano .env
+   ```
+
+3. **Example .env with 1Password references**:
+   ```bash
+   OP_ACCOUNT=my
+   AMAZON_EMAIL=op://vault/item-id/username
+   AMAZON_PASSWORD=op://vault/item-id/password
+   AMAZON_OTP=op://vault/item-id/one-time password
+   ```
+
+   Note: `?attribute=otp` is automatically appended to the OTP reference.
+
+4. **Run without prompts**:
+   ```bash
+   pnpm start -- -d 15
+   # Credentials are automatically fetched from 1Password!
+   ```
 
 ### Command Line Options
 

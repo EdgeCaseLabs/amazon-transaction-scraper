@@ -36,7 +36,7 @@ class AmazonAuth {
     });
   }
 
-  async login(email: string, password: string): Promise<boolean> {
+  async login(email: string, password: string, otpCode?: string): Promise<boolean> {
     if (!this.page) {
       throw new Error('Page not initialized. Call init() first.');
     }
@@ -44,27 +44,27 @@ class AmazonAuth {
     try {
       console.log('Navigating to Amazon payments page...');
       await this.page.goto(config.get('amazon.paymentsUrl'));
-      
+
       // Wait for page to load and check if we need to authenticate
       await this.page.waitForTimeout(3000);
-      
+
       const currentUrl = this.page.url();
       console.log(`Current URL: ${currentUrl}`);
-      
+
       // Check if we're redirected to sign-in or if there's an auth form on the page
       const emailInput = await this.page.$('#ap_email');
       const emailInputAlt = await this.page.$('input[name="email"]');
       const usernameInput = await this.page.$('input[type="email"]');
-      
+
       if (emailInput || emailInputAlt || usernameInput) {
         console.log('🔐 Authentication required. Filling out login form...');
-        
+
         // Try different email input selectors
         let emailField = emailInput || emailInputAlt || usernameInput;
         if (emailField) {
           console.log('Entering email...');
           await emailField.fill(email);
-          
+
           // Look for continue button or check if password field is already visible
           const continueBtn = await this.page.$('#continue');
           if (continueBtn) {
@@ -72,33 +72,56 @@ class AmazonAuth {
             await this.page.waitForTimeout(2000);
           }
         }
-        
+
         // Wait for password field
         const passwordInput = await this.page.waitForSelector('#ap_password, input[name="password"], input[type="password"]', { timeout: 10000 });
-        
+
         if (passwordInput) {
           console.log('Entering password...');
           await passwordInput.fill(password);
-          
+
           // Look for submit button
           const submitBtn = await this.page.$('#signInSubmit, button[type="submit"], input[type="submit"]');
           if (submitBtn) {
             await submitBtn.click();
           }
         }
-        
+
         // Wait longer for potential passkey/2FA authentication
         console.log('⏳ Waiting for authentication to complete...');
-        await this.page.waitForTimeout(5000);
-        
+        await this.page.waitForTimeout(2000);
+
         const newUrl = this.page.url();
         console.log(`🔗 Current URL after login: ${newUrl}`);
-        
+
         // Check for various authentication scenarios
         if (newUrl.includes('ap/mfa') || newUrl.includes('ap/cvf') || newUrl.includes('challenge') || newUrl.includes('signin') || newUrl.includes('/ax/claim')) {
           console.log('🔐 Additional authentication required (2FA/Passkey/Challenge).');
+
+          // Try to auto-fill OTP if provided
+          if (otpCode && otpCode.length > 0) {
+            console.log('🔢 Auto-filling OTP code...');
+            const otpInput = await this.page.$('#auth-mfa-otpcode, input[name="otpCode"], input[id*="otp"], input[name*="otp"]');
+
+            if (otpInput) {
+              await otpInput.fill(otpCode);
+              console.log('✅ OTP code entered');
+
+              // Look for submit button for OTP
+              const otpSubmitBtn = await this.page.$('#auth-signin-button, button[type="submit"], input[type="submit"]');
+              if (otpSubmitBtn) {
+                console.log('🔘 Submitting OTP...');
+                await otpSubmitBtn.click();
+                await this.page.waitForTimeout(3000);
+              }
+            } else {
+              console.log('⚠️ Could not find OTP input field, waiting for manual entry...');
+            }
+          } else {
+            console.log('💡 Use your passkey, complete 2FA, or solve any challenges in the browser.');
+          }
+
           console.log('⏳ Waiting up to 2 minutes for you to complete authentication...');
-          console.log('💡 Use your passkey, complete 2FA, or solve any challenges in the browser.');
           
           // Wait up to 2 minutes for authentication completion
           const maxWaitTime = 120000; // 2 minutes

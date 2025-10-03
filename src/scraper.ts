@@ -86,8 +86,8 @@ class AmazonScraper {
     }
   }
 
-  async login(email: string, password: string): Promise<boolean> {
-    return await this.auth.login(email, password);
+  async login(email: string, password: string, otpCode?: string): Promise<boolean> {
+    return await this.auth.login(email, password, otpCode);
   }
 
   async scrapeTransactions(daysBack: number = 90): Promise<TransactionData> {
