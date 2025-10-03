@@ -27,7 +27,8 @@ export function createTransaction(data: Partial<Transaction>): Transaction {
     orderId: data.orderId || '',
     date: data.date || '',
     total: data.total || 0.0,
-    refund: data.refund || 0.0,
+    refunds: data.refunds || [],
+    grandTotal: data.grandTotal || 0.0,
     recipient: data.recipient || '',
     address: data.address || {},
     items: data.items || [],
@@ -75,6 +76,7 @@ export function createOrderDetails(data: Partial<OrderDetails>): OrderDetails {
     items: data.items || [],
     paymentMethod: data.paymentMethod || '',
     trackingNumber: data.trackingNumber || '',
-    refund: data.refund || 0.0
+    refunds: data.refunds || [],
+    grandTotal: data.grandTotal || 0.0
   };
 }

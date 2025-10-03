@@ -139,15 +139,18 @@ class AmazonScraper {
         await this.processTransactionsInParallel(newTransactions);
       }
       
+      // Consolidate duplicate orders
+      this.consolidateTransactions();
+      
       // Update metadata
       this.transactionData.metadata.totalTransactions = this.transactionData.transactions.length;
       this.transactionData.metadata.totalAmount = this.transactionData.transactions.reduce(
-        (sum, t) => sum + (t.total || 0) - (t.refund || 0), 0
+        (sum, t) => sum + (t.total || 0) - (t.refunds.reduce((rSum, r) => rSum + r, 0)), 0
       );
       this.transactionData.metadata.scrapedAt = new Date().toISOString();
       
       const totalRefunds = this.transactionData.transactions.reduce(
-        (sum, t) => sum + (t.refund || 0), 0
+        (sum, t) => sum + t.refunds.reduce((rSum, r) => rSum + r, 0), 0
       );
       
       console.log(`✅ Scraped ${this.transactionData.transactions.length} transactions`);
@@ -616,7 +619,8 @@ class AmazonScraper {
       items: [],
       paymentMethod: '',
       trackingNumber: '',
-      refund: 0.0
+      refunds: [],
+      grandTotal: 0.0
     };
     
     try {
@@ -639,10 +643,14 @@ class AmazonScraper {
         }
       }
       
-      // Extract refund information - look specifically for "Refund Total"
-      const refundTotalElements = await page.$$('span, div, td');
-      for (const element of refundTotalElements) {
+      // Extract refund information - look for both "Refund Total" and "Grand Total"
+      const totalElements = await page.$$('span, div, td');
+      let grandTotal = 0;
+      
+      for (const element of totalElements) {
         const text = await element.textContent();
+        
+        // Check for Refund Total
         if (text && text.trim() === 'Refund Total') {
           console.log(`🔍 Found "Refund Total" text element`);
           
@@ -653,27 +661,78 @@ class AmazonScraper {
             if (parentText) {
               const refundMatch = parentText.match(/\$([,\d]+\.?\d*)/);
               if (refundMatch) {
-                orderDetails.refund = parseFloat(refundMatch[1].replace(',', ''));
-                console.log(`📈 Found refund amount from "Refund Total": $${orderDetails.refund}`);
-                break;
+                const refundAmount = parseFloat(refundMatch[1].replace(',', ''));
+                orderDetails.refunds.push(refundAmount);
+                console.log(`📈 Found refund amount from "Refund Total": $${refundAmount}`);
               }
             }
           }
           
           // Also check siblings
-          const siblings = await element.evaluateHandle(el => el.parentElement?.children);
-          if (siblings) {
-            const siblingTexts = await siblings.evaluate(children => {
-              const elements = Array.from(children as any);
-              return elements.map((child: any) => child.textContent || '').join(' ');
-            });
-            const refundMatch = siblingTexts.match(/\$([,\d]+\.?\d*)/);
-            if (refundMatch) {
-              orderDetails.refund = parseFloat(refundMatch[1].replace(',', ''));
-              console.log(`📈 Found refund amount from siblings: $${orderDetails.refund}`);
-              break;
+          if (orderDetails.refunds.length === 0) {
+            const siblings = await element.evaluateHandle(el => el.parentElement?.children);
+            if (siblings) {
+              const siblingTexts = await siblings.evaluate(children => {
+                const elements = Array.from(children as any);
+                return elements.map((child: any) => child.textContent || '').join(' ');
+              });
+              const refundMatch = siblingTexts.match(/\$([,\d]+\.?\d*)/);
+              if (refundMatch) {
+                const refundAmount = parseFloat(refundMatch[1].replace(',', ''));
+                orderDetails.refunds.push(refundAmount);
+                console.log(`📈 Found refund amount from siblings: $${refundAmount}`);
+              }
             }
           }
+        }
+        
+        // Check for Grand Total
+        if (text && text.trim() === 'Grand Total') {
+          console.log(`🔍 Found "Grand Total" text element`);
+          
+          // Look for the grand total amount near this element
+          const parent = await element.evaluateHandle(el => el.parentElement);
+          if (parent) {
+            const parentText = await parent.textContent();
+            if (parentText) {
+              const grandTotalMatch = parentText.match(/\$([,\d]+\.?\d*)/);
+              if (grandTotalMatch) {
+                grandTotal = parseFloat(grandTotalMatch[1].replace(',', ''));
+                console.log(`💰 Found grand total amount: $${grandTotal}`);
+              }
+            }
+          }
+          
+          // Also check siblings for grand total
+          if (grandTotal === 0) {
+            const siblings = await element.evaluateHandle(el => el.parentElement?.children);
+            if (siblings) {
+              const siblingTexts = await siblings.evaluate(children => {
+                const elements = Array.from(children as any);
+                return elements.map((child: any) => child.textContent || '').join(' ');
+              });
+              const grandTotalMatch = siblingTexts.match(/\$([,\d]+\.?\d*)/);
+              if (grandTotalMatch) {
+                grandTotal = parseFloat(grandTotalMatch[1].replace(',', ''));
+                console.log(`💰 Found grand total from siblings: $${grandTotal}`);
+              }
+            }
+          }
+        }
+      }
+      
+      // Store the grand total in order details
+      orderDetails.grandTotal = grandTotal;
+      
+      // Log the comparison for debugging
+      const totalRefunds = orderDetails.refunds.reduce((sum, refund) => sum + refund, 0);
+      if (totalRefunds > 0 && grandTotal > 0) {
+        console.log(`🔍 Total Refunds: $${totalRefunds} vs Grand Total: $${grandTotal}`);
+        console.log(`📋 Individual refunds: [${orderDetails.refunds.map(r => `$${r}`).join(', ')}]`);
+        if (totalRefunds >= grandTotal) {
+          console.log(`✅ Refunds cover grand total - will show as refunded`);
+        } else {
+          console.log(`❌ Refunds do not cover grand total - will show as charged`);
         }
       }
 
@@ -941,7 +1000,8 @@ class AmazonScraper {
       items: [],
       paymentMethod: '',
       trackingNumber: '',
-      refund: 0.0
+      refunds: [],
+      grandTotal: 0.0
     };
     
     try {
@@ -964,10 +1024,14 @@ class AmazonScraper {
         }
       }
       
-      // Extract refund information - look specifically for "Refund Total"
-      const refundTotalElements = await page.$$('span, div, td');
-      for (const element of refundTotalElements) {
+      // Extract refund information - look for both "Refund Total" and "Grand Total"
+      const totalElements = await page.$$('span, div, td');
+      let grandTotal = 0;
+      
+      for (const element of totalElements) {
         const text = await element.textContent();
+        
+        // Check for Refund Total
         if (text && text.trim() === 'Refund Total') {
           console.log(`🔍 Found "Refund Total" text element`);
           
@@ -978,27 +1042,78 @@ class AmazonScraper {
             if (parentText) {
               const refundMatch = parentText.match(/\$([,\d]+\.?\d*)/);
               if (refundMatch) {
-                orderDetails.refund = parseFloat(refundMatch[1].replace(',', ''));
-                console.log(`📈 Found refund amount from "Refund Total": $${orderDetails.refund}`);
-                break;
+                const refundAmount = parseFloat(refundMatch[1].replace(',', ''));
+                orderDetails.refunds.push(refundAmount);
+                console.log(`📈 Found refund amount from "Refund Total": $${refundAmount}`);
               }
             }
           }
           
           // Also check siblings
-          const siblings = await element.evaluateHandle(el => el.parentElement?.children);
-          if (siblings) {
-            const siblingTexts = await siblings.evaluate(children => {
-              const elements = Array.from(children as any);
-              return elements.map((child: any) => child.textContent || '').join(' ');
-            });
-            const refundMatch = siblingTexts.match(/\$([,\d]+\.?\d*)/);
-            if (refundMatch) {
-              orderDetails.refund = parseFloat(refundMatch[1].replace(',', ''));
-              console.log(`📈 Found refund amount from siblings: $${orderDetails.refund}`);
-              break;
+          if (orderDetails.refunds.length === 0) {
+            const siblings = await element.evaluateHandle(el => el.parentElement?.children);
+            if (siblings) {
+              const siblingTexts = await siblings.evaluate(children => {
+                const elements = Array.from(children as any);
+                return elements.map((child: any) => child.textContent || '').join(' ');
+              });
+              const refundMatch = siblingTexts.match(/\$([,\d]+\.?\d*)/);
+              if (refundMatch) {
+                const refundAmount = parseFloat(refundMatch[1].replace(',', ''));
+                orderDetails.refunds.push(refundAmount);
+                console.log(`📈 Found refund amount from siblings: $${refundAmount}`);
+              }
             }
           }
+        }
+        
+        // Check for Grand Total
+        if (text && text.trim() === 'Grand Total') {
+          console.log(`🔍 Found "Grand Total" text element`);
+          
+          // Look for the grand total amount near this element
+          const parent = await element.evaluateHandle(el => el.parentElement);
+          if (parent) {
+            const parentText = await parent.textContent();
+            if (parentText) {
+              const grandTotalMatch = parentText.match(/\$([,\d]+\.?\d*)/);
+              if (grandTotalMatch) {
+                grandTotal = parseFloat(grandTotalMatch[1].replace(',', ''));
+                console.log(`💰 Found grand total amount: $${grandTotal}`);
+              }
+            }
+          }
+          
+          // Also check siblings for grand total
+          if (grandTotal === 0) {
+            const siblings = await element.evaluateHandle(el => el.parentElement?.children);
+            if (siblings) {
+              const siblingTexts = await siblings.evaluate(children => {
+                const elements = Array.from(children as any);
+                return elements.map((child: any) => child.textContent || '').join(' ');
+              });
+              const grandTotalMatch = siblingTexts.match(/\$([,\d]+\.?\d*)/);
+              if (grandTotalMatch) {
+                grandTotal = parseFloat(grandTotalMatch[1].replace(',', ''));
+                console.log(`💰 Found grand total from siblings: $${grandTotal}`);
+              }
+            }
+          }
+        }
+      }
+      
+      // Store the grand total in order details
+      orderDetails.grandTotal = grandTotal;
+      
+      // Log the comparison for debugging
+      const totalRefunds = orderDetails.refunds.reduce((sum, refund) => sum + refund, 0);
+      if (totalRefunds > 0 && grandTotal > 0) {
+        console.log(`🔍 Total Refunds: $${totalRefunds} vs Grand Total: $${grandTotal}`);
+        console.log(`📋 Individual refunds: [${orderDetails.refunds.map(r => `$${r}`).join(', ')}]`);
+        if (totalRefunds >= grandTotal) {
+          console.log(`✅ Refunds cover grand total - will show as refunded`);
+        } else {
+          console.log(`❌ Refunds do not cover grand total - will show as charged`);
         }
       }
 
@@ -1073,11 +1188,12 @@ class AmazonScraper {
 
   async takeSmartOrderScreenshot(page: Page, screenshotPath: string): Promise<void> {
     try {
-      // First, check for "Refund Total" elements and hover over them to show tooltips
-      const refundTotalElements = await page.$$('span, div, td');
+      // First, check for "Refund Total" and "Grand Total" elements and hover over them to show tooltips
+      const totalElements = await page.$$('span, div, td');
       let foundRefundTotal = false;
+      let foundGrandTotal = false;
       
-      for (const element of refundTotalElements) {
+      for (const element of totalElements) {
         const text = await element.textContent();
         if (text && text.trim() === 'Refund Total') {
           console.log(`  💡 Found "Refund Total" - hovering to capture tooltip`);
@@ -1086,12 +1202,19 @@ class AmazonScraper {
           // Hover over the element to trigger any tooltips
           await element.hover();
           await page.waitForTimeout(1000); // Wait for tooltip to appear
-          break;
+        }
+        if (text && text.trim() === 'Grand Total') {
+          console.log(`  💡 Found "Grand Total" - hovering to capture tooltip`);
+          foundGrandTotal = true;
+          
+          // Hover over the element to trigger any tooltips
+          await element.hover();
+          await page.waitForTimeout(1000); // Wait for tooltip to appear
         }
       }
       
-      if (foundRefundTotal) {
-        console.log(`  📸 Taking screenshot with refund tooltip visible`);
+      if (foundRefundTotal || foundGrandTotal) {
+        console.log(`  📸 Taking screenshot with total tooltips visible`);
       }
       
       // Look for the main order content container
@@ -1112,14 +1235,13 @@ class AmazonScraper {
             await cardElement.evaluate(element => element.scrollIntoView());
             await page.waitForTimeout(500); // Wait for scroll to complete
             
-            // Re-hover over refund total after scrolling if it was found
-            if (foundRefundTotal) {
-              for (const element of refundTotalElements) {
+            // Re-hover over totals after scrolling if they were found
+            if (foundRefundTotal || foundGrandTotal) {
+              for (const element of totalElements) {
                 const text = await element.textContent();
-                if (text && text.trim() === 'Refund Total') {
+                if (text && (text.trim() === 'Refund Total' || text.trim() === 'Grand Total')) {
                   await element.hover();
                   await page.waitForTimeout(500);
-                  break;
                 }
               }
             }
@@ -1129,15 +1251,66 @@ class AmazonScraper {
         // Take screenshot of just the element
         await cardElement.screenshot({ path: screenshotPath });
       } else {
-        console.log(`  📸 No .a-cardui element found, taking viewport screenshot`);
-        // Fallback to viewport screenshot if no card element found
-        await page.screenshot({ path: screenshotPath });
+        console.log(`  📸 No .a-cardui element found, taking full page screenshot`);
+        // Fallback to full page screenshot if no card element found
+        await page.screenshot({ path: screenshotPath, fullPage: true });
       }
     } catch (error) {
       console.error(`Error taking smart screenshot: ${error}`);
-      // Fallback to basic screenshot
-      await page.screenshot({ path: screenshotPath });
+      // Fallback to full page screenshot
+      await page.screenshot({ path: screenshotPath, fullPage: true });
     }
+  }
+
+  consolidateTransactions(): void {
+    console.log(`🔄 Consolidating duplicate transactions...`);
+    const transactionMap = new Map<string, Transaction>();
+    
+    for (const transaction of this.transactionData.transactions) {
+      const orderId = transaction.orderId;
+      
+      if (transactionMap.has(orderId)) {
+        const existing = transactionMap.get(orderId)!;
+        
+        // Merge refunds from duplicate transactions
+        existing.refunds.push(...transaction.refunds);
+        
+        // Keep the higher total (original purchase amount)
+        if (transaction.total > existing.total) {
+          existing.total = transaction.total;
+        }
+        
+        // Keep the higher grand total
+        if (transaction.grandTotal > existing.grandTotal) {
+          existing.grandTotal = transaction.grandTotal;
+        }
+        
+        // Merge other details if they're missing
+        if (!existing.recipient && transaction.recipient) {
+          existing.recipient = transaction.recipient;
+        }
+        if (!existing.address.full && transaction.address.full) {
+          existing.address = transaction.address;
+        }
+        if (!existing.paymentMethod && transaction.paymentMethod) {
+          existing.paymentMethod = transaction.paymentMethod;
+        }
+        if (transaction.items.length > existing.items.length) {
+          existing.items = transaction.items;
+        }
+        if (!existing.orderScreenshot && transaction.orderScreenshot) {
+          existing.orderScreenshot = transaction.orderScreenshot;
+        }
+        
+        console.log(`🔗 Merged duplicate order ${orderId} - Refunds: [${existing.refunds.map(r => `$${r}`).join(', ')}]`);
+      } else {
+        transactionMap.set(orderId, { ...transaction });
+      }
+    }
+    
+    // Replace transactions with consolidated ones
+    this.transactionData.transactions = Array.from(transactionMap.values());
+    console.log(`✅ Consolidated to ${this.transactionData.transactions.length} unique transactions`);
   }
 
   async close(): Promise<void> {

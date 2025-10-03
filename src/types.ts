@@ -16,7 +16,8 @@ export interface Transaction {
   orderId: string;
   date: string;
   total: number;
-  refund: number;
+  refunds: number[];
+  grandTotal: number;
   recipient: string;
   address: Address;
   items: Item[];
@@ -79,5 +80,6 @@ export interface OrderDetails {
   items: Item[];
   paymentMethod: string;
   trackingNumber: string;
-  refund: number;
+  refunds: number[];
+  grandTotal: number;
 }

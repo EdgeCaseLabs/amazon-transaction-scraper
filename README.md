@@ -8,7 +8,7 @@ A TypeScript-based tool to scrape Amazon transaction data and generate human-rea
 - **Transaction Scraping**: Extracts transaction data from Amazon's payments page
 - **Order Details**: Scrapes individual order pages for detailed product information
 - **Product Images**: Captures product images and order screenshots
-- **Refund Tracking**: Accurately detects "Refund Total" amounts and captures hover tooltips in screenshots
+- **Smart Refund Logic**: Compares "Refund Total" vs "Grand Total" to determine if an order is fully refunded
 - **Direct Amazon Links**: Includes clickable links to view orders directly on Amazon
 - **JSON Export**: Saves all data in structured JSON format
 - **HTML Reports**: Generates beautiful, interactive HTML reports with color-coded charges
@@ -130,7 +130,8 @@ The tool creates a `config.json` file with default settings:
       "orderId": "123-456-789",
       "date": "2024-01-15",
       "total": 45.99,
-      "refund": 0.00,
+      "refunds": [],
+      "grandTotal": 45.99,
       "recipient": "John Doe",
       "orderDetailsUrl": "https://www.amazon.com/gp/your-account/order-details?orderID=123-456-789",
       "items": [

@@ -94,8 +94,11 @@ class HTMLGenerator {
   createTransactionHTML(transaction: Transaction): string {
     const formattedDate = this.formatDate(transaction.date);
     const hasItems = transaction.items && transaction.items.length > 0;
-    const hasRefund = transaction.refund > 0;
-    const amountClass = hasRefund ? 'order-amount-refunded' : 'order-amount-charged';
+    const totalRefunds = transaction.refunds.reduce((sum, refund) => sum + refund, 0);
+    const hasRefunds = totalRefunds > 0;
+    // Only show as refunded if total refunds meet or exceed grand total
+    const isFullyRefunded = hasRefunds && transaction.grandTotal > 0 && totalRefunds >= transaction.grandTotal;
+    const amountClass = isFullyRefunded ? 'order-amount-refunded' : 'order-amount-charged';
     
     return `
         <div class="transaction" data-order-id="${transaction.orderId}">
@@ -107,7 +110,8 @@ class HTMLGenerator {
                     </div>
                     <div class="order-amount-container">
                         <div class="order-amount ${amountClass}">$${transaction.total.toFixed(2)}</div>
-                        ${hasRefund ? `<div class="refund-amount">Refund: $${transaction.refund.toFixed(2)}</div>` : ''}
+                        ${hasRefunds ? `<div class="refund-amount">Total Refunds: $${totalRefunds.toFixed(2)}</div>` : ''}
+                        ${transaction.refunds.length > 1 ? `<div class="refund-details">${transaction.refunds.length} refunds</div>` : ''}
                     </div>
                 </div>
                 <div class="expand-icon">▼</div>
@@ -125,6 +129,17 @@ class HTMLGenerator {
                 ${transaction.address.full ? `<div class="address">${transaction.address.full}</div>` : ''}
                 ${transaction.paymentMethod ? `<div class="payment-method">Payment: ${transaction.paymentMethod}</div>` : ''}
                 ${transaction.trackingNumber ? `<div class="tracking">Tracking: ${transaction.trackingNumber}</div>` : ''}
+                ${hasRefunds && transaction.refunds.length > 0 ? `
+                    <div class="refunds-section">
+                        <h4>Refunds:</h4>
+                        <div class="refunds-list">
+                            ${transaction.refunds.map((refund, index) => `
+                                <div class="refund-item">Refund ${index + 1}: $${refund.toFixed(2)}</div>
+                            `).join('')}
+                            <div class="refund-total"><strong>Total Refunded: $${totalRefunds.toFixed(2)}</strong></div>
+                        </div>
+                    </div>
+                ` : ''}
                 
                 ${hasItems ? `
                     <div class="items">
@@ -363,6 +378,40 @@ class HTMLGenerator {
             color: #28a745;
             font-weight: 500;
             margin-top: 2px;
+        }
+
+        .refund-details {
+            font-size: 0.8em;
+            color: #666;
+            margin-top: 2px;
+        }
+
+        .refunds-section {
+            margin-top: 15px;
+        }
+
+        .refunds-section h4 {
+            margin-bottom: 10px;
+            color: #232f3e;
+        }
+
+        .refunds-list {
+            background: #f8f9fa;
+            padding: 10px;
+            border-radius: 4px;
+            border-left: 4px solid #28a745;
+        }
+
+        .refund-item {
+            margin-bottom: 5px;
+            color: #28a745;
+        }
+
+        .refund-total {
+            margin-top: 10px;
+            padding-top: 10px;
+            border-top: 1px solid #dee2e6;
+            color: #28a745;
         }
 
         .expand-icon {
