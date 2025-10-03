@@ -5,22 +5,23 @@
   "main": "dist/index.js",
   "scripts": {
     "build": "tsc",
-    "start": "pnpm run build && node dist/index.js",
-    "scrape": "pnpm run build && node dist/scraper.js",
+    "scrape": "pnpm run build && node dist/index.js",
     "generate": "pnpm run build && node dist/generator.js",
+    "regenerate": "pnpm run build && node dist/regenerate-summaries.js",
     "dev": "ts-node src/index.ts",
     "serve": "ts-node src/serve.ts"
   },
   "dependencies": {
-    "playwright": "^1.44.0",
+    "@anthropic-ai/sdk": "^0.65.0",
+    "date-fns": "^3.6.0",
     "fs-extra": "^11.2.0",
-    "date-fns": "^3.6.0"
+    "playwright": "^1.44.0"
   },
   "devDependencies": {
-    "dotenv": "^16.4.5",
-    "typescript": "^5.4.5",
-    "ts-node": "^10.9.2",
+    "@types/fs-extra": "^11.0.4",
     "@types/node": "^20.12.7",
-    "@types/fs-extra": "^11.0.4"
+    "dotenv": "^16.4.5",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.4.5"
   }
 }

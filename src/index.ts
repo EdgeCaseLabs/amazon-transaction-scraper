@@ -47,11 +47,12 @@ function resolve1PasswordSecret(reference: string, account: string = 'my'): stri
 /**
  * Get credentials from environment variables or 1Password
  */
-function getCredentials(): { email: string | null; password: string | null; otp: string | null } {
+function getCredentials(): { email: string | null; password: string | null; otp: string | null; anthropicApiKey: string | null } {
   const account = process.env.OP_ACCOUNT || 'my';
   const emailRef = process.env.AMAZON_EMAIL || process.env.AMAZON_USERNAME;
   const passwordRef = process.env.AMAZON_PASSWORD;
   let otpRef = process.env.AMAZON_OTP;
+  const anthropicKeyRef = process.env.ANTHROPIC_API_KEY;
 
   // Automatically append ?attribute=otp to OTP references if it's an op:// reference
   if (otpRef && otpRef.startsWith('op://') && !otpRef.includes('?attribute=otp')) {
@@ -61,7 +62,8 @@ function getCredentials(): { email: string | null; password: string | null; otp:
   return {
     email: emailRef ? resolve1PasswordSecret(emailRef, account) : null,
     password: passwordRef ? resolve1PasswordSecret(passwordRef, account) : null,
-    otp: otpRef ? resolve1PasswordSecret(otpRef, account) : null
+    otp: otpRef ? resolve1PasswordSecret(otpRef, account) : null,
+    anthropicApiKey: anthropicKeyRef ? resolve1PasswordSecret(anthropicKeyRef, account) : null
   };
 }
 
@@ -125,6 +127,7 @@ Environment Variables (optional):
   AMAZON_EMAIL         Email address (can use op:// reference)
   AMAZON_PASSWORD      Password (can use op:// reference)
   AMAZON_OTP           One-time password (can use op:// reference)
+  ANTHROPIC_API_KEY    API key for AI summaries (can use op:// reference)
 
 1Password CLI Integration:
   Use op:// references in .env to securely fetch credentials:
@@ -133,10 +136,16 @@ Environment Variables (optional):
   AMAZON_EMAIL=op://vault/item-id/username
   AMAZON_PASSWORD=op://vault/item-id/password
   AMAZON_OTP=op://vault/item-id/one-time password
+  ANTHROPIC_API_KEY=op://vault/item-id/api_key
 
   Copy .env.sample to .env and update with your 1Password references.
   Make sure you're signed in: op signin --account my
   Note: ?attribute=otp is automatically appended to OTP references.
+
+AI Product Summaries:
+  If ANTHROPIC_API_KEY is provided, Claude AI will generate intelligent
+  product summaries. Without it, the scraper falls back to heuristic-based
+  summaries. Get your API key from: https://console.anthropic.com/
 
 Note: Password will be prompted securely if not provided via environment.
 `);
@@ -242,7 +251,7 @@ async function main(): Promise<void> {
       console.log('✅ Using OTP from environment/1Password');
     }
 
-    const scraper = new AmazonScraper();
+    const scraper = new AmazonScraper(envCreds.anthropicApiKey || undefined);
 
     try {
       console.log('🚀 Initializing Amazon scraper...');

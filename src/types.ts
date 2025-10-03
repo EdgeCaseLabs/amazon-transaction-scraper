@@ -25,6 +25,8 @@ export interface Transaction {
   paymentMethod: string;
   trackingNumber: string;
   orderDetailsUrl?: string;
+  memo?: string;
+  productSummaryFile?: string;
 }
 
 export interface Address {

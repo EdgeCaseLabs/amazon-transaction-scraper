@@ -107,6 +107,7 @@ class HTMLGenerator {
                     <div class="order-info">
                         <div class="order-id">${transaction.orderId}</div>
                         <div class="order-date">${formattedDate}</div>
+                        ${transaction.memo ? `<div class="order-memo">📝 ${transaction.memo.replace(/^\[.*?\]\s*-\s*/, '')}</div>` : ''}
                     </div>
                     <div class="order-amount-container">
                         <div class="order-amount ${amountClass}">$${transaction.total.toFixed(2)}</div>
@@ -123,6 +124,11 @@ class HTMLGenerator {
                         <a href="${transaction.orderDetailsUrl}" target="_blank" rel="noopener noreferrer" class="amazon-link">
                             📦 View Order on Amazon
                         </a>
+                    </div>
+                ` : ''}
+                ${transaction.memo ? `
+                    <div class="memo-section">
+                        <div class="memo-content">📝 ${transaction.memo}</div>
                     </div>
                 ` : ''}
                 ${transaction.recipient ? `<div class="recipient">Delivered to: ${transaction.recipient}</div>` : ''}
@@ -354,6 +360,17 @@ class HTMLGenerator {
             font-size: 0.9em;
         }
 
+        .order-memo {
+            color: #667eea;
+            font-size: 0.85em;
+            font-style: italic;
+            margin-top: 3px;
+            max-width: 400px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
         .order-amount-container {
             display: flex;
             flex-direction: column;
@@ -456,6 +473,20 @@ class HTMLGenerator {
             background: #e68900;
             text-decoration: none;
             color: white;
+        }
+
+        .memo-section {
+            margin-bottom: 15px;
+        }
+
+        .memo-content {
+            padding: 12px 15px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border-radius: 6px;
+            font-size: 0.95em;
+            font-weight: 500;
+            box-shadow: 0 2px 6px rgba(102, 126, 234, 0.3);
         }
 
         .recipient, .address, .payment-method, .tracking {

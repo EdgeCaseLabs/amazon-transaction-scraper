@@ -35,7 +35,9 @@ export function createTransaction(data: Partial<Transaction>): Transaction {
     orderScreenshot: data.orderScreenshot || '',
     paymentMethod: data.paymentMethod || '',
     trackingNumber: data.trackingNumber || '',
-    orderDetailsUrl: data.orderDetailsUrl || ''
+    orderDetailsUrl: data.orderDetailsUrl || '',
+    memo: data.memo || '',
+    productSummaryFile: data.productSummaryFile || ''
   };
 }
 

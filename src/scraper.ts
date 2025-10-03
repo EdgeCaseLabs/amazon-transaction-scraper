@@ -7,16 +7,19 @@ import { createEmptyTransactionData, createTransaction, createItem } from './sch
 import { TransactionData, Transaction, BasicTransaction, OrderDetails, Item } from './types';
 import { Page, ElementHandle, Browser, BrowserContext } from 'playwright';
 import { chromium } from 'playwright';
+import AISummarizer from './ai-summarizer';
 
 class AmazonScraper {
   private auth: AmazonAuth;
   private transactionData: TransactionData;
   private screenshotCounter: number = 0;
   private processedOrders: Set<string> = new Set();
+  private aiSummarizer: AISummarizer;
 
-  constructor() {
+  constructor(anthropicApiKey?: string) {
     this.auth = new AmazonAuth();
     this.transactionData = createEmptyTransactionData();
+    this.aiSummarizer = new AISummarizer(anthropicApiKey);
   }
 
   async initialize(): Promise<void> {
@@ -115,10 +118,10 @@ class AmazonScraper {
         throw new Error('Browser page not initialized');
       }
       await page.waitForTimeout(3000);
-      
+
       // Look for transaction elements (these selectors may need to be updated based on actual page structure)
-      const transactions = await this.scrapeTransactionList();
-      
+      const transactions = await this.scrapeTransactionList(startDate, endDate);
+
       console.log(`📋 Found ${transactions.length} transactions`);
       
       // Filter out already processed transactions
@@ -166,83 +169,159 @@ class AmazonScraper {
     }
   }
 
-  async scrapeTransactionList(): Promise<BasicTransaction[]> {
+  async scrapeTransactionList(startDate: Date, endDate: Date): Promise<BasicTransaction[]> {
     const page = this.auth.getPage();
     if (!page) {
       throw new Error('Browser page not initialized');
     }
-    
+
     const transactions: BasicTransaction[] = [];
-    
+
     try {
       // Take a screenshot first to see what we're working with
       await this.auth.takeScreenshot(path.join(config.get('output.screenshotsDir'), 'page-analysis.png'));
-      
+
       // Get page content for analysis
       const pageContent = await page.content();
       console.log('Page HTML length:', pageContent.length);
-      
+
       // Save HTML content for analysis
       const htmlPath = path.join(config.get('output.screenshotsDir'), 'page-content.html');
       await fs.writeFile(htmlPath, pageContent, 'utf8');
       console.log(`💾 HTML content saved to: ${htmlPath}`);
-      
+
       // Use the actual Amazon DOM structure you identified
       console.log('🔍 Using Amazon transaction DOM structure (.apx-transactions-line-item-component-container)...');
-      
+      console.log(`📅 Date range filter: ${format(startDate, 'yyyy-MM-dd')} to ${format(endDate, 'yyyy-MM-dd')}`);
+
       let allTransactions: BasicTransaction[] = [];
       let currentPage = 1;
-      
+      let consecutiveOldTransactions = 0;
+      const OLD_TRANSACTION_THRESHOLD = 5; // Stop if we find 5 consecutive transactions outside date range
+
       // Process all pages of transactions
       while (true) {
         console.log(`📄 Processing page ${currentPage}...`);
-        
-        // Look for transaction rows using the correct class
-        const transactionRows = await page.$$('.apx-transactions-line-item-component-container');
-        console.log(`📋 Found ${transactionRows.length} transaction rows on page ${currentPage}`);
-        
-        if (transactionRows.length === 0) {
-          console.log('❌ No transaction rows found on this page');
+
+        // Get all transaction containers and date containers
+        // Amazon's structure: date container, then multiple transaction rows, then another date container, etc.
+        const pageElements = await page.$$('.apx-transaction-date-container, .apx-transactions-line-item-component-container');
+        console.log(`📋 Found ${pageElements.length} elements (dates + transactions) on page ${currentPage}`);
+
+        if (pageElements.length === 0) {
+          console.log('❌ No transaction elements found on this page');
           break;
         }
-        
-        // Process each transaction row
-        for (let i = 0; i < transactionRows.length; i++) {
-          const row = transactionRows[i];
-          console.log(`Processing transaction ${i + 1}/${transactionRows.length} on page ${currentPage}`);
-          
+
+        let transactionsBeforeDateRange = 0;
+        let currentDate = '';
+        let transactionCount = 0;
+
+        // Process elements in order - when we hit a date, update current date; when we hit a transaction, use that date
+        for (let i = 0; i < pageElements.length; i++) {
+          const element = pageElements[i];
+
+          // Check if this is a date container
+          const className = await element.getAttribute('class');
+
+          if (className?.includes('apx-transaction-date-container')) {
+            // This is a date header - extract and store the date
+            const dateText = await element.textContent();
+            if (dateText) {
+              currentDate = dateText.trim();
+              console.log(`📅 Found date header: ${currentDate}`);
+            }
+            continue;
+          }
+
+          // This is a transaction row
+          transactionCount++;
+          console.log(`Processing transaction ${transactionCount} on page ${currentPage}`);
+
           try {
-            const transaction = await this.extractTransactionFromRow(row);
+            const transaction = await this.extractTransactionFromRow(element);
+
             if (transaction) {
+              // Apply the current date from the date header
+              if (currentDate && !transaction.date) {
+                transaction.date = currentDate;
+              }
+
+              // Check if transaction is within date range
+              let transactionDate: Date | null = null;
+              if (transaction.date) {
+                try {
+                  transactionDate = parseISO(transaction.date);
+                  // Handle various date formats
+                  if (isNaN(transactionDate.getTime())) {
+                    transactionDate = new Date(transaction.date);
+                  }
+                } catch (e) {
+                  console.log(`⚠️ Could not parse date: ${transaction.date}`);
+                }
+              }
+
+              // If we have a valid date, check if it's in range
+              if (transactionDate && !isNaN(transactionDate.getTime())) {
+                if (transactionDate < startDate) {
+                  console.log(`📅 Transaction ${transaction.orderId} is before start date (${transaction.date}), skipping`);
+                  transactionsBeforeDateRange++;
+                  consecutiveOldTransactions++;
+
+                  // Stop if we've found enough consecutive old transactions
+                  if (consecutiveOldTransactions >= OLD_TRANSACTION_THRESHOLD) {
+                    console.log(`⏹️ Found ${consecutiveOldTransactions} consecutive transactions before ${format(startDate, 'yyyy-MM-dd')}, stopping pagination`);
+                    return allTransactions;
+                  }
+                  continue;
+                } else if (transactionDate > endDate) {
+                  console.log(`📅 Transaction ${transaction.orderId} is after end date (${transaction.date}), skipping`);
+                  continue;
+                } else {
+                  // Transaction is in range, reset counter
+                  consecutiveOldTransactions = 0;
+                }
+              } else {
+                // No date found, include it but reset counter
+                console.log(`⚠️ No date found for transaction ${transaction.orderId}, including anyway`);
+                consecutiveOldTransactions = 0;
+              }
+
               allTransactions.push(transaction);
-              console.log(`✅ Extracted: ${transaction.orderId} - $${transaction.total}`);
+              console.log(`✅ Extracted: ${transaction.orderId} - ${transaction.date} - $${transaction.total}`);
             }
           } catch (error) {
             console.error(`❌ Error processing transaction ${i + 1}:`, error);
           }
         }
-        
+
+        // If all transactions on this page were before the date range, stop
+        if (transactionsBeforeDateRange === transactionCount && transactionCount > 0) {
+          console.log(`⏹️ All ${transactionsBeforeDateRange} transactions on page ${currentPage} are before ${format(startDate, 'yyyy-MM-dd')}, stopping pagination`);
+          break;
+        }
+
         // Look for "Next Page" button
         console.log('🔍 Looking for "Next Page" button...');
         const nextPageSpan = await page.$('span:has-text("Next Page")');
-        
+
         if (nextPageSpan) {
           console.log(`📄 Found "Next Page" button, navigating to page ${currentPage + 1}...`);
           await nextPageSpan.click();
-          
+
           // Wait for the next page to load
           await page.waitForLoadState('networkidle');
           await page.waitForTimeout(2000);
-          
+
           currentPage++;
-          
+
           // Take screenshot of new page
           await this.auth.takeScreenshot(path.join(config.get('output.screenshotsDir'), `page-${currentPage}.png`));
         } else {
           console.log('✅ No "Next Page" button found, reached end of transactions');
           break;
         }
-        
+
         // Safety check to prevent infinite loops
         if (currentPage > 10) {
           console.log('⚠️ Reached maximum page limit (10), stopping pagination');
@@ -272,17 +351,17 @@ class AmazonScraper {
       // Get text content from the row for analysis
       const rowText = await row.textContent();
       console.log(`Row text sample:`, rowText?.substring(0, 200));
-      
+
       // Look for order ID links within the row
       const orderLink = await row.$('a[href*="order"], a[href*="gp/your-account"]');
       let orderId = '';
       let orderDetailsUrl = '';
-      
+
       if (orderLink) {
         const href = await orderLink.getAttribute('href');
         if (href) {
           orderDetailsUrl = href.startsWith('http') ? href : config.get('amazon.baseUrl') + href;
-          
+
           // Extract order ID from URL
           const orderIdMatch = href.match(/orderID=([^&]+)/);
           if (orderIdMatch) {
@@ -290,7 +369,7 @@ class AmazonScraper {
           }
         }
       }
-      
+
       // Look for amount in the row
       let total = 0;
       if (rowText) {
@@ -299,7 +378,10 @@ class AmazonScraper {
           total = parseFloat(amountMatch[1].replace(',', ''));
         }
       }
-      
+
+      // Date will be set from the date header container, not from the row
+      let date = '';
+
       // If we don't have basic info, try text patterns
       if (!orderId && rowText) {
         const orderIdMatch = rowText.match(/(D\d{2}-\d{7}-\d{7}|1\d{2}-\d{7}-\d{7})/);
@@ -313,18 +395,18 @@ class AmazonScraper {
       if (orderId && !orderDetailsUrl) {
         orderDetailsUrl = `https://www.amazon.com/gp/your-account/order-details?orderID=${orderId}`;
       }
-      
+
       if (orderId || total > 0) {
         const result = {
           orderId: orderId || `unknown-${Date.now()}`,
-          date: '', // Will be filled from order page
+          date: date,
           total,
           orderDetailsUrl
         };
         console.log(`🔗 Basic transaction URL: ${orderDetailsUrl}`);
         return result;
       }
-      
+
       return null;
     } catch (error) {
       console.error('Error extracting transaction from row:', error);
@@ -940,22 +1022,43 @@ class AmazonScraper {
       } else {
         console.log(`  📸 Browser ${browserIndex}: Screenshot already exists: ${screenshotPath}`);
       }
-      
+
+      // IMPORTANT: Extract rendered page text AFTER screenshot
+      // This ensures we get the DOM content after JavaScript has executed and rendered
+      // Extract from the same element we screenshot (.a-cardui) for consistency
+      console.log(`  📄 Browser ${browserIndex}: Extracting rendered page content...`);
+      const cardElement = await page.$('.a-cardui, .order-details, .order-info');
+
+      let pageText = '';
+      if (cardElement) {
+        pageText = await cardElement.evaluate((element) => {
+          // @ts-ignore - innerText is available in browser context
+          return element.innerText || element.textContent || '';
+        }) as string;
+        console.log(`  📄 Browser ${browserIndex}: Extracted ${pageText.length} characters from .a-cardui element`);
+      } else {
+        // Fallback to full body if card element not found
+        pageText = await page.evaluate(() => {
+          // @ts-ignore - document is available in browser context
+          return document.body.innerText || document.body.textContent || '';
+        }) as string;
+        console.log(`  📄 Browser ${browserIndex}: Extracted ${pageText.length} characters from full page (no .a-cardui found)`);
+      }
+
       // Extract detailed order information including date
       const orderDetails = await this.extractOrderDetailsWithPage(page);
-      
+
       // Extract date from order page if not already present
       let orderDate = transaction.date;
       if (!orderDate) {
-        const bodyText = await page.textContent('body') || '';
         const datePatterns = [
           /((?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]* \d{1,2}, \d{4})/i,
           /(\d{1,2}\/\d{1,2}\/\d{4})/,
           /(\d{4}-\d{2}-\d{2})/
         ];
-        
+
         for (const pattern of datePatterns) {
-          const match = bodyText.match(pattern);
+          const match = pageText.match(pattern);
           if (match) {
             orderDate = match[1];
             console.log(`  📅 Browser ${browserIndex}: Extracted date from order page: ${orderDate}`);
@@ -963,7 +1066,24 @@ class AmazonScraper {
           }
         }
       }
-      
+
+      // Generate product summary and memo
+      let productSummaryFile = '';
+      let memo = '';
+
+      // Generate summary from rendered page text
+      const summary = await this.generateProductSummaryFromPage(page, transaction.orderId, pageText);
+      productSummaryFile = await this.saveProductSummaryToFile(transaction.orderId, summary);
+
+      if (orderDetails.items && orderDetails.items.length > 0) {
+        memo = this.createMemoFromItems(orderDetails.items, transaction.orderId);
+        console.log(`  📝 Browser ${browserIndex}: Created memo from items: ${memo}`);
+      } else {
+        // Create memo from page text if no items were extracted
+        memo = await this.createMemoFromPageText(pageText, transaction.orderId);
+        console.log(`  📝 Browser ${browserIndex}: Created memo from page text: ${memo}`);
+      }
+
       // Create detailed transaction object
       console.log(`🔗 Creating detailed transaction with URL: ${transaction.orderDetailsUrl}`);
       const detailedTransaction = createTransaction({
@@ -972,9 +1092,11 @@ class AmazonScraper {
         total: transaction.total,
         orderScreenshot: screenshotPath,
         orderDetailsUrl: transaction.orderDetailsUrl,
+        memo,
+        productSummaryFile,
         ...orderDetails
       });
-      
+
       console.log(`🔗 Final transaction URL: ${detailedTransaction.orderDetailsUrl}`);
       return detailedTransaction;
       
@@ -1262,29 +1384,147 @@ class AmazonScraper {
     }
   }
 
+  /**
+   * Generate a detailed product summary from page content
+   */
+  async generateProductSummaryFromPage(page: Page, orderId: string, pageText: string): Promise<string> {
+    const lines: string[] = [
+      `Order: ${orderId}`,
+      `Scraped: ${new Date().toISOString()}`,
+      '',
+      'Page Content:',
+      '---',
+      pageText.substring(0, 5000) // Limit to first 5000 chars
+    ];
+
+    return lines.join('\n');
+  }
+
+  /**
+   * Create memo from page text by extracting product-like information
+   */
+  async createMemoFromPageText(pageText: string, orderId: string): Promise<string> {
+    // Try AI summarization first if enabled
+    if (this.aiSummarizer.isEnabled()) {
+      try {
+        return await this.aiSummarizer.createMemo(pageText, orderId);
+      } catch (error) {
+        console.warn('⚠️ AI summarization failed, falling back to heuristic method:', error instanceof Error ? error.message : String(error));
+        // Fall through to heuristic method below
+      }
+    }
+
+    // Fallback: Use heuristic-based summarization
+    // Look for product names or order items in the text
+    const lines = pageText.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+
+    // Try to find lines that look like product names (between 10-100 chars, not all caps)
+    const productLike = lines.filter(line => {
+      return line.length > 10 &&
+             line.length < 100 &&
+             line !== line.toUpperCase() &&
+             !line.startsWith('http') &&
+             !line.includes('@') &&
+             !line.match(/^\d+$/);
+    }).slice(0, 3); // Take first 3
+
+    if (productLike.length > 0) {
+      return `[${orderId}] - ${productLike.join(', ')}`;
+    }
+
+    return `[${orderId}] - Order details (see full summary)`;
+  }
+
+  /**
+   * Generate a detailed product summary from items
+   */
+  generateProductSummary(items: Item[], orderId: string): string {
+    if (!items || items.length === 0) {
+      return `Order ${orderId}: No product details available`;
+    }
+
+    const lines: string[] = [
+      `Order: ${orderId}`,
+      `Total Items: ${items.reduce((sum, item) => sum + item.quantity, 0)}`,
+      '',
+      'Products:'
+    ];
+
+    for (const item of items) {
+      const quantityStr = item.quantity > 1 ? `${item.quantity}x ` : '';
+      const priceStr = item.price > 0 ? ` - $${item.price.toFixed(2)}` : '';
+      const sellerStr = item.seller ? ` (Sold by: ${item.seller})` : '';
+
+      lines.push(`  ${quantityStr}${item.name}${priceStr}${sellerStr}`);
+    }
+
+    return lines.join('\n');
+  }
+
+  /**
+   * Create a concise memo from items for quick reference
+   */
+  createMemoFromItems(items: Item[], orderId: string): string {
+    if (!items || items.length === 0) {
+      return `[${orderId}] - No products`;
+    }
+
+    const productSummaries = items.map(item => {
+      const quantityStr = item.quantity > 1 ? `${item.quantity}x ` : '';
+      return `${quantityStr}${item.name}`;
+    });
+
+    // Limit to first 3 products to keep memo concise
+    const displayItems = productSummaries.slice(0, 3);
+    const more = productSummaries.length > 3 ? `, +${productSummaries.length - 3} more` : '';
+
+    return `[${orderId}] - ${displayItems.join(', ')}${more}`;
+  }
+
+  /**
+   * Save product summary to a text file
+   */
+  async saveProductSummaryToFile(orderId: string, summary: string): Promise<string> {
+    const summaryPath = path.join(
+      config.get('output.screenshotsDir'),
+      `order-${orderId}.txt`
+    );
+
+    // Only save if it doesn't already exist (idempotent)
+    if (await fs.pathExists(summaryPath)) {
+      console.log(`  📄 Summary file already exists: ${summaryPath}`);
+      return summaryPath;
+    }
+
+    await fs.writeFile(summaryPath, summary, 'utf8');
+    console.log(`  📄 Summary saved: ${summaryPath}`);
+
+    return summaryPath;
+  }
+
   consolidateTransactions(): void {
     console.log(`🔄 Consolidating duplicate transactions...`);
     const transactionMap = new Map<string, Transaction>();
-    
+
     for (const transaction of this.transactionData.transactions) {
       const orderId = transaction.orderId;
-      
+
       if (transactionMap.has(orderId)) {
         const existing = transactionMap.get(orderId)!;
-        
+
         // Merge refunds from duplicate transactions
         existing.refunds.push(...transaction.refunds);
-        
+
         // Keep the higher total (original purchase amount)
         if (transaction.total > existing.total) {
           existing.total = transaction.total;
         }
-        
+
         // Keep the higher grand total
         if (transaction.grandTotal > existing.grandTotal) {
           existing.grandTotal = transaction.grandTotal;
         }
-        
+
         // Merge other details if they're missing
         if (!existing.recipient && transaction.recipient) {
           existing.recipient = transaction.recipient;
@@ -1301,13 +1541,13 @@ class AmazonScraper {
         if (!existing.orderScreenshot && transaction.orderScreenshot) {
           existing.orderScreenshot = transaction.orderScreenshot;
         }
-        
+
         console.log(`🔗 Merged duplicate order ${orderId} - Refunds: [${existing.refunds.map(r => `$${r}`).join(', ')}]`);
       } else {
         transactionMap.set(orderId, { ...transaction });
       }
     }
-    
+
     // Replace transactions with consolidated ones
     this.transactionData.transactions = Array.from(transactionMap.values());
     console.log(`✅ Consolidated to ${this.transactionData.transactions.length} unique transactions`);

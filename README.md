@@ -9,6 +9,7 @@ A TypeScript-based tool to scrape Amazon transaction data and generate human-rea
 - **Transaction Scraping**: Extracts transaction data from Amazon's payments page
 - **Order Details**: Scrapes individual order pages for detailed product information
 - **Product Images**: Captures product images and order screenshots
+- **Product Summaries**: Generates text summaries and memos from order pages
 - **Smart Refund Logic**: Compares "Refund Total" vs "Grand Total" to determine if an order is fully refunded
 - **Direct Amazon Links**: Includes clickable links to view orders directly on Amazon
 - **JSON Export**: Saves all data in structured JSON format
