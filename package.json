@@ -8,7 +8,8 @@
     "start": "pnpm run build && node dist/index.js",
     "scrape": "pnpm run build && node dist/scraper.js",
     "generate": "pnpm run build && node dist/generator.js",
-    "dev": "ts-node src/index.ts"
+    "dev": "ts-node src/index.ts",
+    "serve": "ts-node src/serve.ts"
   },
   "dependencies": {
     "playwright": "^1.44.0",
