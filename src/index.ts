@@ -286,6 +286,20 @@ async function main(): Promise<void> {
       console.log(`🌐 HTML report: ${htmlPath}`);
       console.log(`📊 Total transactions: ${transactionData.metadata.totalTransactions}`);
       console.log(`💰 Total amount: $${transactionData.metadata.totalAmount.toFixed(2)}`);
+
+      // Print YNAB MCP prompts with JSON file path substituted
+      const promptsPath = path.join(__dirname, '..', 'ynab-mcp-PROMPTS.md');
+      if (fs.existsSync(promptsPath)) {
+        const promptsContent = fs.readFileSync(promptsPath, 'utf-8');
+        const promptsWithPath = promptsContent.replace(/\{\{json_file\}\}/g, path.resolve(jsonPath));
+        console.log('\n' + '='.repeat(60));
+        console.log('📋 Next Steps - YNAB Integration:');
+        console.log('='.repeat(60));
+        console.log('\nCopy and paste the following prompt into Claude Desktop to');
+        console.log('correlate your Amazon transactions with YNAB:\n');
+        console.log('-'.repeat(60) + '\n');
+        console.log(promptsWithPath);
+      }
       
     } finally {
       await scraper.close();
