@@ -1,4 +1,5 @@
 import Anthropic from '@anthropic-ai/sdk';
+import fetch from 'node-fetch';
 
 export class AISummarizer {
   private client: Anthropic | null = null;
@@ -6,7 +7,7 @@ export class AISummarizer {
 
   constructor(apiKey?: string) {
     if (apiKey) {
-      this.client = new Anthropic({ apiKey });
+      this.client = new Anthropic({ apiKey, fetch: fetch as unknown as typeof globalThis.fetch });
       this.enabled = true;
       console.log('✨ AI summarization enabled');
     } else {

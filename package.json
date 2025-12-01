@@ -9,18 +9,24 @@
     "generate": "pnpm run build && node dist/generator.js",
     "regenerate": "pnpm run build && node dist/regenerate-summaries.js",
     "dev": "ts-node src/index.ts",
-    "serve": "ts-node src/serve.ts"
+    "serve": "ts-node src/serve.ts",
+    "mcp": "node dist/mcp-server.js",
+    "start": "pnpm run build && node dist/index.js"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.65.0",
+    "@modelcontextprotocol/sdk": "^1.23.0",
     "date-fns": "^3.6.0",
+    "dotenv": "^16.4.5",
     "fs-extra": "^11.2.0",
-    "playwright": "^1.44.0"
+    "node-fetch": "^2.7.0",
+    "playwright": "^1.44.0",
+    "zod": "^4.1.13"
   },
   "devDependencies": {
     "@types/fs-extra": "^11.0.4",
     "@types/node": "^20.12.7",
-    "dotenv": "^16.4.5",
+    "@types/node-fetch": "^2.6.13",
     "ts-node": "^10.9.2",
     "typescript": "^5.4.5"
   }
