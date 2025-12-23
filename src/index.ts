@@ -251,7 +251,12 @@ async function main(): Promise<void> {
       console.log('✅ Using OTP from environment/1Password');
     }
 
-    const scraper = new AmazonScraper(envCreds.anthropicApiKey || undefined);
+    if (!envCreds.anthropicApiKey) {
+      console.error('❌ Missing ANTHROPIC_API_KEY. AI summarization is required.');
+      process.exit(1);
+    }
+
+    const scraper = new AmazonScraper(envCreds.anthropicApiKey);
 
     try {
       console.log('🚀 Initializing Amazon scraper...');

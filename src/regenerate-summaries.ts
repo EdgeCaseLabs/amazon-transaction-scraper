@@ -191,11 +191,6 @@ async function main(): Promise<void> {
     // Create AI summarizer
     const aiSummarizer = new AISummarizer(anthropicApiKey);
 
-    if (!aiSummarizer.isEnabled()) {
-      console.error('❌ Error: AI summarization is not enabled');
-      process.exit(1);
-    }
-
     // Regenerate summaries
     await regenerateSummaries(jsonPath, aiSummarizer);
 

@@ -99,8 +99,20 @@ server.tool(
         };
       }
 
-      // Initialize scraper
-      const scraper = new AmazonScraper(creds.anthropicApiKey || undefined);
+      if (!creds.anthropicApiKey) {
+        return {
+          isError: true,
+          content: [
+            {
+              type: "text" as const,
+              text: "Missing ANTHROPIC_API_KEY. AI summarization is required.",
+            },
+          ],
+        };
+      }
+
+      // Initialize scraper (skip deduplication - MCP always scrapes fresh)
+      const scraper = new AmazonScraper(creds.anthropicApiKey, true);
 
       try {
         console.log("Initializing Amazon scraper...");
@@ -160,6 +172,20 @@ server.tool(
 
 // Start the server
 async function main() {
+  // Validate required env vars exist at startup (don't resolve yet)
+  const emailVar = process.env.AMAZON_EMAIL || process.env.AMAZON_USERNAME;
+  const passwordVar = process.env.AMAZON_PASSWORD;
+  const anthropicVar = process.env.ANTHROPIC_API_KEY;
+
+  if (!emailVar || !passwordVar) {
+    console.error("Missing credentials. Ensure AMAZON_EMAIL and AMAZON_PASSWORD are set in .env file (can use op:// references for 1Password).");
+    process.exit(1);
+  }
+  if (!anthropicVar) {
+    console.error("Missing ANTHROPIC_API_KEY. AI summarization is required.");
+    process.exit(1);
+  }
+
   try {
     const transport = new StdioServerTransport();
     await server.connect(transport);

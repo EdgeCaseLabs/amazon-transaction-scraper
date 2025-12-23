@@ -15,23 +15,27 @@ class AmazonScraper {
   private screenshotCounter: number = 0;
   private processedOrders: Set<string> = new Set();
   private aiSummarizer: AISummarizer;
+  private skipDeduplication: boolean;
 
-  constructor(anthropicApiKey?: string) {
+  constructor(anthropicApiKey: string, skipDeduplication: boolean = false) {
     this.auth = new AmazonAuth();
     this.transactionData = createEmptyTransactionData();
     this.aiSummarizer = new AISummarizer(anthropicApiKey);
+    this.skipDeduplication = skipDeduplication;
   }
 
   async initialize(): Promise<void> {
     await this.auth.init();
-    
+
     // Ensure output directories exist
     await fs.ensureDir(config.get('output.dataDir'));
     await fs.ensureDir(config.get('output.outputDir'));
     await fs.ensureDir(config.get('output.screenshotsDir'));
-    
-    // Load previously processed orders
-    await this.loadProcessedOrders();
+
+    // Load previously processed orders (unless skipping deduplication)
+    if (!this.skipDeduplication) {
+      await this.loadProcessedOrders();
+    }
   }
 
   async loadProcessedOrders(): Promise<void> {
@@ -952,11 +956,10 @@ class AmazonScraper {
             
           } catch (error) {
             console.error(`❌ Browser ${index + 1} error processing ${transaction.orderId}:`, error);
-            // Add basic transaction data as fallback
-            results.push(createTransaction(transaction));
+            throw error;
           }
         }
-        
+
         return results;
       });
       
@@ -1102,16 +1105,7 @@ class AmazonScraper {
       
     } catch (error) {
       console.error(`❌ Browser ${browserIndex} error scraping order details for ${transaction.orderId}:`, error);
-      
-      // Return basic transaction data if detailed scraping fails
-      return createTransaction({
-        orderId: transaction.orderId,
-        date: transaction.date,
-        total: transaction.total,
-        orderScreenshot: '',
-        orderDetailsUrl: transaction.orderDetailsUrl,
-        items: []
-      });
+      throw error;
     }
   }
 
@@ -1401,38 +1395,10 @@ class AmazonScraper {
   }
 
   /**
-   * Create memo from page text by extracting product-like information
+   * Create memo from page text using AI summarization
    */
   async createMemoFromPageText(pageText: string, orderId: string): Promise<string> {
-    // Try AI summarization first if enabled
-    if (this.aiSummarizer.isEnabled()) {
-      try {
-        return await this.aiSummarizer.createMemo(pageText, orderId);
-      } catch (error) {
-        console.warn('⚠️ AI summarization failed, falling back to heuristic method:', error instanceof Error ? error.message : String(error));
-        // Fall through to heuristic method below
-      }
-    }
-
-    // Fallback: Use heuristic-based summarization
-    // Look for product names or order items in the text
-    const lines = pageText.split('\n').map(l => l.trim()).filter(l => l.length > 0);
-
-    // Try to find lines that look like product names (between 10-100 chars, not all caps)
-    const productLike = lines.filter(line => {
-      return line.length > 10 &&
-             line.length < 100 &&
-             line !== line.toUpperCase() &&
-             !line.startsWith('http') &&
-             !line.includes('@') &&
-             !line.match(/^\d+$/);
-    }).slice(0, 3); // Take first 3
-
-    if (productLike.length > 0) {
-      return `[${orderId}] - ${productLike.join(', ')}`;
-    }
-
-    return `[${orderId}] - Order details (see full summary)`;
+    return await this.aiSummarizer.createMemo(pageText, orderId);
   }
 
   /**

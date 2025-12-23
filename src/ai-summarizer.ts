@@ -1,22 +1,25 @@
 import Anthropic from '@anthropic-ai/sdk';
-import fetch from 'node-fetch';
+import fetch, { Headers, Request, Response } from 'node-fetch';
+import { FormData } from 'formdata-node';
+
+// Polyfill fetch globals for environments that don't have them (e.g., MCP)
+if (!globalThis.fetch) {
+  globalThis.fetch = fetch as unknown as typeof globalThis.fetch;
+  globalThis.Headers = Headers as unknown as typeof globalThis.Headers;
+  globalThis.Request = Request as unknown as typeof globalThis.Request;
+  globalThis.Response = Response as unknown as typeof globalThis.Response;
+  globalThis.FormData = FormData as unknown as typeof globalThis.FormData;
+}
 
 export class AISummarizer {
-  private client: Anthropic | null = null;
-  private enabled: boolean = false;
+  private client: Anthropic;
 
-  constructor(apiKey?: string) {
-    if (apiKey) {
-      this.client = new Anthropic({ apiKey, fetch: fetch as unknown as typeof globalThis.fetch });
-      this.enabled = true;
-      console.log('✨ AI summarization enabled');
-    } else {
-      console.log('ℹ️  AI summarization disabled (no API key)');
+  constructor(apiKey: string) {
+    if (!apiKey) {
+      throw new Error('AI summarization requires an API key (ANTHROPIC_API_KEY)');
     }
-  }
-
-  isEnabled(): boolean {
-    return this.enabled;
+    this.client = new Anthropic({ apiKey });
+    console.log('✨ AI summarization enabled');
   }
 
   /**
@@ -26,10 +29,6 @@ export class AISummarizer {
    * @returns A concise, natural language summary
    */
   async generateProductSummary(pageText: string, orderId: string): Promise<string> {
-    if (!this.client || !this.enabled) {
-      throw new Error('AI summarization is not enabled');
-    }
-
     try {
       console.log(`🤖 Generating AI summary for order ${orderId}...`);
 
@@ -74,13 +73,8 @@ Return only the product summary, nothing else.`;
    * Create a complete memo with order ID and AI-generated summary
    */
   async createMemo(pageText: string, orderId: string): Promise<string> {
-    try {
-      const summary = await this.generateProductSummary(pageText, orderId);
-      return `[${orderId}] - ${summary}`;
-    } catch (error) {
-      console.error(`❌ Failed to create AI memo for ${orderId}`);
-      return `[${orderId}] - Order details (AI summary unavailable)`;
-    }
+    const summary = await this.generateProductSummary(pageText, orderId);
+    return `[${orderId}] - ${summary}`;
   }
 }
 

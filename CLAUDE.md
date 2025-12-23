@@ -140,6 +140,23 @@ The refund determination logic is in two places:
 1. Scraper: `extractOrderDetails()` logs comparison
 2. Generator: `createTransactionHTML()` renders color (line 100)
 
+## MCP Server
+
+The scraper can run as an MCP server for use with Claude Desktop or other MCP clients.
+
+### Debugging MCP
+
+Monitor the MCP server logs:
+```bash
+tail -f ~/Library/Logs/Claude/mcp-server-amazon-scraper.log
+```
+
+### MCP-specific behavior
+
+- **No deduplication**: MCP runs always scrape fresh (skipDeduplication=true)
+- **Credentials validated at startup**: Server fails immediately if AMAZON_EMAIL, AMAZON_PASSWORD, or ANTHROPIC_API_KEY env vars are missing
+- **Credentials resolved on invocation**: 1Password lookups only happen when the tool is actually called
+
 ## Dependencies
 
 - **playwright**: Browser automation (requires `pnpm exec playwright install`)
