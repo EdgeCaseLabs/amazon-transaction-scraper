@@ -3,7 +3,8 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-import { format } from "date-fns";
+import { format, parseISO, isValid } from "date-fns";
+import { ScrapeOptions } from "./types";
 import * as path from "path";
 import * as dotenv from "dotenv";
 import { execSync } from "child_process";
@@ -78,12 +79,55 @@ server.tool(
       .number()
       .min(1)
       .max(100)
-      .default(15)
-      .describe("Number of days to go back when scraping transactions (1-100, default: 15)"),
+      .optional()
+      .describe("Number of days to go back when scraping transactions (1-100, default: 15). Ignored if startDate is provided."),
+    startDate: z
+      .string()
+      .regex(/^\d{4}-\d{2}-\d{2}$/, "Date must be in YYYY-MM-DD format")
+      .optional()
+      .describe("Start date in YYYY-MM-DD format. If provided, overrides 'days' parameter."),
+    endDate: z
+      .string()
+      .regex(/^\d{4}-\d{2}-\d{2}$/, "Date must be in YYYY-MM-DD format")
+      .optional()
+      .describe("End date in YYYY-MM-DD format. Defaults to today if startDate is provided."),
   },
-  async ({ days }) => {
+  async ({ days, startDate, endDate }) => {
     try {
-      console.log(`Starting Amazon transaction scrape for last ${days} days...`);
+      // Build scrape options
+      const scrapeOptions: ScrapeOptions = {};
+
+      if (startDate) {
+        const parsedStart = parseISO(startDate);
+        if (!isValid(parsedStart)) {
+          return {
+            isError: true,
+            content: [{ type: "text" as const, text: `Invalid start date: ${startDate}. Use YYYY-MM-DD format.` }],
+          };
+        }
+        scrapeOptions.startDate = parsedStart;
+
+        if (endDate) {
+          const parsedEnd = parseISO(endDate);
+          if (!isValid(parsedEnd)) {
+            return {
+              isError: true,
+              content: [{ type: "text" as const, text: `Invalid end date: ${endDate}. Use YYYY-MM-DD format.` }],
+            };
+          }
+          if (parsedEnd < parsedStart) {
+            return {
+              isError: true,
+              content: [{ type: "text" as const, text: `End date (${endDate}) cannot be before start date (${startDate}).` }],
+            };
+          }
+          scrapeOptions.endDate = parsedEnd;
+        }
+        console.log(`Starting Amazon transaction scrape from ${startDate} to ${endDate || 'today'}...`);
+      } else {
+        scrapeOptions.days = days || 15;
+        console.log(`Starting Amazon transaction scrape for last ${scrapeOptions.days} days...`);
+      }
 
       // Get credentials
       const creds = getCredentials();
@@ -134,7 +178,7 @@ server.tool(
         }
 
         console.log("Scraping transactions...");
-        await scraper.scrapeTransactions(days);
+        await scraper.scrapeTransactions(scrapeOptions);
 
         // Save JSON data
         const timestamp = format(new Date(), "yyyy-MM-dd-HH-mm");

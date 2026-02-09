@@ -85,3 +85,12 @@ export interface OrderDetails {
   refunds: number[];
   grandTotal: number;
 }
+
+export interface ScrapeOptions {
+  /** Number of days to go back from today */
+  days?: number;
+  /** Explicit start date (overrides days if provided) */
+  startDate?: Date;
+  /** Explicit end date (defaults to today if startDate provided) */
+  endDate?: Date;
+}

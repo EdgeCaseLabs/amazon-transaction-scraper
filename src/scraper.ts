@@ -4,7 +4,7 @@ import { format, subDays, parseISO } from 'date-fns';
 import AmazonAuth from './auth';
 import config from './config';
 import { createEmptyTransactionData, createTransaction, createItem } from './schemas';
-import { TransactionData, Transaction, BasicTransaction, OrderDetails, Item } from './types';
+import { TransactionData, Transaction, BasicTransaction, OrderDetails, Item, ScrapeOptions } from './types';
 import { Page, ElementHandle, Browser, BrowserContext } from 'playwright';
 import { chromium } from 'playwright';
 import AISummarizer from './ai-summarizer';
@@ -97,12 +97,23 @@ class AmazonScraper {
     return await this.auth.login(email, password, otpCode);
   }
 
-  async scrapeTransactions(daysBack: number = 90): Promise<TransactionData> {
+  async scrapeTransactions(options: ScrapeOptions = { days: 90 }): Promise<TransactionData> {
     try {
-      console.log(`🔍 Scraping transactions from the last ${daysBack} days...`);
-      
-      const endDate = new Date();
-      const startDate = subDays(endDate, daysBack);
+      let startDate: Date;
+      let endDate: Date;
+
+      if (options.startDate) {
+        // Use explicit date range
+        startDate = options.startDate;
+        endDate = options.endDate || new Date();
+        console.log(`🔍 Scraping transactions from ${format(startDate, 'yyyy-MM-dd')} to ${format(endDate, 'yyyy-MM-dd')}...`);
+      } else {
+        // Use days back from today
+        const daysBack = options.days || 90;
+        endDate = new Date();
+        startDate = subDays(endDate, daysBack);
+        console.log(`🔍 Scraping transactions from the last ${daysBack} days...`);
+      }
       
       this.transactionData.metadata.dateRange = {
         start: format(startDate, 'yyyy-MM-dd'),

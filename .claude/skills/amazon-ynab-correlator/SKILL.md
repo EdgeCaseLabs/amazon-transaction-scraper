@@ -1,14 +1,11 @@
+---
+name: amazon-ynab-correlator
+description: Correlate Amazon orders with YNAB transactions. Use when reconciling Amazon purchases, matching YNAB transactions to Amazon orders, or updating YNAB memos with Amazon order details.
+---
 
 # Amazon-YNAB Transaction Correlator
 
-## Step 1: Scrape Recent Amazon Transactions
-Use amazon-scraper:scrape_amazon_transactions
-{
-  "days": 15
-}
-Store the returned file path for Step 2.
-
-## Step 2: Get Unapproved YNAB Transactions
+## Step 1: Get Unapproved YNAB Transactions
 Use ynab:get_transactions
 {
   "budget_id": "default",
@@ -19,10 +16,25 @@ Filter results for:
 - memo is null or empty
 - Sort by date descending (most recent first)
 
+If no matching transactions found, report this and stop.
+
+## Step 2: Calculate Date Range and Scrape Amazon
+From the filtered YNAB transactions:
+- Find the oldest transaction date
+- Find the newest transaction date
+- Add 5 days buffer on each end to account for processing delays
+
+Use amazon-scraper:scrape_amazon_transactions
+{
+  "startDate": "<oldest_date - 5 days>",
+  "endDate": "<newest_date + 5 days>"
+}
+Store the returned file path for Step 3.
+
 ## Step 3: Load Amazon Transaction Details
 Use Filesystem:read_text_file
 {
-  "path": "<path_from_step_1>"
+  "path": "<path_from_step_2>"
 }
 
 ## Step 4: Correlation Logic
@@ -52,27 +64,23 @@ Show a table with columns:
 Include summary: X high confidence, Y medium confidence, Z unmatched
 
 ## Step 6: Execute Updates
-**High confidence**: Update automatically using ynab:update_transaction
+For each matched transaction, use ynab:update_transaction
 {
   "transaction_id": "<transaction_id>",
   "memo": "[order-id] - description",
   "budget_id": "default"
 }
-**Medium confidence**: Show batch and ask "Update these N transactions?"
-Then use ynab:update_transactions (bulk update)
-{
-  "transactions": [
-    {"id": "<transaction_id>", "memo": "[order-id] - description"},
-    ...
-  ],
-  "budget_id": "default"
-}
+
+**High confidence**: Update automatically
+**Medium confidence**: Show batch and ask "Update these N transactions?" before updating each one
 **Low confidence**: List separately for manual review
+
 Memo format: "[{order_id}] {item_description}"
 - For multi-item orders: use first 2-3 items with "..." if more
 - Keep under 200 characters
 - Include item quantity if >1
+
 ## Error Handling
 - If amazon-scraper:scrape_amazon_transactions fails, ask to retry or use Filesystem:read_text_file with manual path
-- If no unapproved Amazon transactions found, report this
-- If correlation finds no matches, suggest expanding days parameter
+- If no unapproved Amazon transactions found, report this and stop early
+- If correlation finds no matches, report unmatched YNAB transactions for manual review

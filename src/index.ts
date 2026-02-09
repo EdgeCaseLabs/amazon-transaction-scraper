@@ -3,7 +3,8 @@
 import * as fs from 'fs-extra';
 import * as path from 'path';
 import * as readline from 'readline';
-import { format } from 'date-fns';
+import { format, parseISO, isValid } from 'date-fns';
+import { ScrapeOptions } from './types';
 import { execSync } from 'child_process';
 import * as dotenv from 'dotenv';
 import AmazonScraper from './scraper';
@@ -16,6 +17,8 @@ dotenv.config();
 interface CommandLineArgs {
   email?: string;
   days?: number;
+  startDate?: string;
+  endDate?: string;
   outputName?: string;
   generateOnly?: string;
   help?: boolean;
@@ -83,6 +86,13 @@ function parseArgs(): CommandLineArgs {
       case '--days':
         args.days = parseInt(argv[++i], 10);
         break;
+      case '-s':
+      case '--start-date':
+        args.startDate = argv[++i];
+        break;
+      case '--end-date':
+        args.endDate = argv[++i];
+        break;
       case '-o':
       case '--output':
         args.outputName = argv[++i];
@@ -111,12 +121,16 @@ Usage:
 Options:
   -e, --email <email>       Amazon account email
   -d, --days <number>       Number of days to scrape (default: 90)
+  -s, --start-date <date>   Start date in YYYY-MM-DD format (overrides --days)
+      --end-date <date>     End date in YYYY-MM-DD format (default: today)
   -o, --output <name>       Output file name prefix (default: transactions)
   -g, --generate <file>     Generate HTML from existing JSON file
   -h, --help                Show this help message
 
 Examples:
   pnpm start -- -e user@example.com -d 30
+  pnpm start -- -e user@example.com --start-date 2025-12-01 --end-date 2025-12-15
+  pnpm start -- -e user@example.com -s 2025-12-01
   pnpm start -- --generate data/transactions-2024-07-05.json
   pnpm start -- -e user@example.com -o quarterly-report
 
@@ -272,8 +286,41 @@ async function main(): Promise<void> {
       }
       
       console.log('📊 Scraping transactions...');
-      const days = args.days || config.get('dateRange.defaultDays');
-      const transactionData = await scraper.scrapeTransactions(days);
+
+      // Build scrape options
+      const scrapeOptions: ScrapeOptions = {};
+
+      if (args.startDate) {
+        // Parse and validate start date
+        const startDate = parseISO(args.startDate);
+        if (!isValid(startDate)) {
+          console.error(`❌ Invalid start date format: ${args.startDate}. Use YYYY-MM-DD.`);
+          await scraper.close();
+          process.exit(1);
+        }
+        scrapeOptions.startDate = startDate;
+
+        // Parse end date if provided, otherwise defaults to today in scraper
+        if (args.endDate) {
+          const endDate = parseISO(args.endDate);
+          if (!isValid(endDate)) {
+            console.error(`❌ Invalid end date format: ${args.endDate}. Use YYYY-MM-DD.`);
+            await scraper.close();
+            process.exit(1);
+          }
+          if (endDate < startDate) {
+            console.error(`❌ End date (${args.endDate}) cannot be before start date (${args.startDate}).`);
+            await scraper.close();
+            process.exit(1);
+          }
+          scrapeOptions.endDate = endDate;
+        }
+      } else {
+        // Use days
+        scrapeOptions.days = args.days || config.get('dateRange.defaultDays');
+      }
+
+      const transactionData = await scraper.scrapeTransactions(scrapeOptions);
       
       // Save JSON data
       const timestamp = format(new Date(), 'yyyy-MM-dd-HH-mm');
