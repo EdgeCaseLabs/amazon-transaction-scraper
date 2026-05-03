@@ -11,8 +11,11 @@ if (!globalThis.fetch) {
   globalThis.FormData = FormData as unknown as typeof globalThis.FormData;
 }
 
+const FALLBACK_HAIKU_MODEL = 'claude-haiku-4-5-20251001';
+
 export class AISummarizer {
   private client: Anthropic;
+  private modelPromise?: Promise<string>;
 
   constructor(apiKey: string) {
     if (!apiKey) {
@@ -20,6 +23,39 @@ export class AISummarizer {
     }
     this.client = new Anthropic({ apiKey });
     console.log('✨ AI summarization enabled');
+  }
+
+  /**
+   * Resolve latest Haiku model ID from /v1/models endpoint.
+   * Cached on first call. Falls back to a known-good model on error.
+   */
+  private async resolveLatestHaikuModel(): Promise<string> {
+    if (this.modelPromise) return this.modelPromise;
+
+    this.modelPromise = (async () => {
+      try {
+        const haikuModels: { id: string; created_at: string }[] = [];
+        for await (const model of this.client.models.list({ limit: 1000 })) {
+          if (model.id.toLowerCase().includes('haiku')) {
+            haikuModels.push({ id: model.id, created_at: model.created_at });
+          }
+        }
+        if (haikuModels.length === 0) {
+          console.error(`No Haiku models returned from API; falling back to ${FALLBACK_HAIKU_MODEL}`);
+          return FALLBACK_HAIKU_MODEL;
+        }
+        haikuModels.sort((a, b) => b.created_at.localeCompare(a.created_at));
+        const latest = haikuModels[0].id;
+        console.log(`🧠 Resolved latest Haiku model: ${latest}`);
+        return latest;
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.error(`Model resolution failed (${msg}); falling back to ${FALLBACK_HAIKU_MODEL}`);
+        return FALLBACK_HAIKU_MODEL;
+      }
+    })();
+
+    return this.modelPromise;
   }
 
   /**
@@ -48,8 +84,9 @@ Instructions:
 
 Return only the product summary, nothing else.`;
 
+      const model = await this.resolveLatestHaikuModel();
       const message = await this.client.messages.create({
-        model: 'claude-3-haiku-20240307',
+        model,
         max_tokens: 150,
         messages: [{
           role: 'user',
