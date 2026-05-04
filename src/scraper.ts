@@ -325,7 +325,7 @@ class AmazonScraper {
           await nextPageSpan.click();
 
           // Wait for the next page to load
-          await page.waitForLoadState('networkidle');
+          await page.waitForLoadState('domcontentloaded');
           await page.waitForTimeout(2000);
 
           currentPage++;
@@ -647,7 +647,7 @@ class AmazonScraper {
       // Navigate to order details page
       if (transaction.orderDetailsUrl) {
         await page.goto(transaction.orderDetailsUrl);
-        await page.waitForLoadState('networkidle');
+        await page.waitForLoadState('domcontentloaded');
       }
       
       // Take screenshot of order page
@@ -820,7 +820,10 @@ class AmazonScraper {
       
       // Store the grand total in order details
       orderDetails.grandTotal = grandTotal;
-      
+
+      // Deduplicate refunds - the same amount can be scraped from multiple DOM elements
+      orderDetails.refunds = [...new Set(orderDetails.refunds)];
+
       // Log the comparison for debugging
       const totalRefunds = orderDetails.refunds.reduce((sum, refund) => sum + refund, 0);
       if (totalRefunds > 0 && grandTotal > 0) {
@@ -967,7 +970,7 @@ class AmazonScraper {
             
           } catch (error) {
             console.error(`❌ Browser ${index + 1} error processing ${transaction.orderId}:`, error);
-            throw error;
+            // Continue processing remaining transactions instead of aborting
           }
         }
 
@@ -1020,7 +1023,7 @@ class AmazonScraper {
       // Navigate to order details page
       if (transaction.orderDetailsUrl) {
         await page.goto(transaction.orderDetailsUrl);
-        await page.waitForLoadState('networkidle');
+        await page.waitForLoadState('domcontentloaded');
       }
       
       // Take screenshot of order page (idempotent filename)
@@ -1231,7 +1234,10 @@ class AmazonScraper {
       
       // Store the grand total in order details
       orderDetails.grandTotal = grandTotal;
-      
+
+      // Deduplicate refunds - the same amount can be scraped from multiple DOM elements
+      orderDetails.refunds = [...new Set(orderDetails.refunds)];
+
       // Log the comparison for debugging
       const totalRefunds = orderDetails.refunds.reduce((sum, refund) => sum + refund, 0);
       if (totalRefunds > 0 && grandTotal > 0) {

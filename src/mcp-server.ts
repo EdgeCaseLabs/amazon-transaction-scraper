@@ -92,8 +92,40 @@ server.tool(
       .optional()
       .describe("End date in YYYY-MM-DD format. Defaults to today if startDate is provided."),
   },
-  async ({ days, startDate, endDate }) => {
+  async ({ days, startDate, endDate }, extra) => {
     try {
+      // Fall back to requestId when client (e.g. Claude Desktop) doesn't
+      // supply progressToken in _meta. Many clients still reset their tool
+      // timeout on any progress notification correlated to the in-flight call.
+      const progressToken = extra?._meta?.progressToken ?? extra?.requestId;
+      let progressCounter = 0;
+      const notify = async (message: string): Promise<void> => {
+        if (progressToken === undefined) return;
+        try {
+          await extra.sendNotification({
+            method: "notifications/progress",
+            params: {
+              progressToken,
+              progress: ++progressCounter,
+              message,
+            },
+          });
+          console.error(`[progress ${progressCounter}] ${message}`);
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          console.error(`Failed to send progress notification: ${msg}`);
+        }
+      };
+      const startKeepalive = (label: string): NodeJS.Timeout => {
+        const startedAt = Date.now();
+        // Fire immediately so client timer resets within first interval too.
+        void notify(`${label} (0s elapsed)`);
+        return setInterval(() => {
+          const elapsed = Math.round((Date.now() - startedAt) / 1000);
+          void notify(`${label} (${elapsed}s elapsed)`);
+        }, 5_000);
+      };
+
       // Build scrape options
       const scrapeOptions: ScrapeOptions = {};
 
@@ -161,9 +193,17 @@ server.tool(
       try {
         console.log("Initializing Amazon scraper...");
         await scraper.initialize();
+        await notify("Initialized scraper");
 
         console.log("Logging in to Amazon (browser window will open for 2FA)...");
-        const loginSuccess = await scraper.login(creds.email, creds.password, creds.otp || undefined);
+        await notify("Logging in to Amazon (browser window opened for 2FA)");
+        const loginKeepalive = startKeepalive("Waiting for Amazon login / 2FA");
+        let loginSuccess: boolean;
+        try {
+          loginSuccess = await scraper.login(creds.email, creds.password, creds.otp || undefined);
+        } finally {
+          clearInterval(loginKeepalive);
+        }
 
         if (!loginSuccess) {
           return {
@@ -178,13 +218,21 @@ server.tool(
         }
 
         console.log("Scraping transactions...");
-        await scraper.scrapeTransactions(scrapeOptions);
+        await notify("Login successful, beginning transaction scrape");
+        const scrapeKeepalive = startKeepalive("Scraping transactions");
+        try {
+          await scraper.scrapeTransactions(scrapeOptions);
+        } finally {
+          clearInterval(scrapeKeepalive);
+        }
+        await notify("Scraping complete, saving data");
 
         // Save JSON data
         const timestamp = format(new Date(), "yyyy-MM-dd-HH-mm");
         const jsonFilename = `transactions-${timestamp}.json`;
         const jsonPath = await scraper.saveData(jsonFilename);
         const fullPath = path.resolve(jsonPath);
+        await notify(`Saved transactions to ${fullPath}`);
 
         console.log(`Scraping complete! JSON saved to: ${fullPath}`);
 
