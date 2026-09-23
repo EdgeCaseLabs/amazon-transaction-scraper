@@ -1,5 +1,12 @@
 import { chromium, Browser, BrowserContext, Page } from 'playwright';
+import * as fs from 'fs';
+import * as path from 'path';
 import config from './config';
+
+// Persisted Amazon session (cookies + localStorage). Lets the device stay
+// "trusted" between runs so Amazon skips the 2FA prompt on later scrapes.
+const STATE_DIR = path.join(process.cwd(), '.auth');
+const STATE_PATH = path.join(STATE_DIR, 'amazon-state.json');
 
 class AmazonAuth {
   private browser: Browser | null = null;
@@ -15,14 +22,31 @@ class AmazonAuth {
       headless: config.get('scraping.headless'),
       slowMo: 100
     });
-    
+
+    const hasSavedState = fs.existsSync(STATE_PATH);
+    if (hasSavedState) {
+      console.log('🔓 Reusing saved Amazon session (skips 2FA when still valid)');
+    }
+
     this.context = await this.browser.newContext({
       viewport: { width: 1280, height: 720 },
-      userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+      userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+      ...(hasSavedState ? { storageState: STATE_PATH } : {})
     });
     
+    // Suppress WebAuthn/passkey prompts: Amazon calls navigator.credentials.get()
+    // which triggers the native OS passkey dialog and blocks login until cancelled.
+    // Reject the call so Amazon falls back to password/OTP auth.
+    await this.context.addInitScript(() => {
+      const nav = (globalThis as any).navigator;
+      if (nav && nav.credentials && typeof nav.credentials.get === 'function') {
+        nav.credentials.get = () =>
+          Promise.reject(new (globalThis as any).DOMException('Passkey disabled by scraper', 'NotAllowedError'));
+      }
+    });
+
     this.page = await this.context.newPage();
-    
+
     // Set extra headers to appear more like a real browser
     await this.page.setExtraHTTPHeaders({
       'Accept-Language': 'en-US,en;q=0.9',
@@ -166,6 +190,7 @@ class AmazonAuth {
       
       if (isLoggedIn) {
         console.log('✅ Successfully accessed Amazon payments page');
+        await this.saveState();
         return true;
       } else {
         console.log('❌ Login failed or additional verification needed');
@@ -307,6 +332,24 @@ class AmazonAuth {
       console.log(`Screenshot saved: ${filename}`);
     } catch (error) {
       console.error('Error taking screenshot:', error);
+    }
+  }
+
+  // Persist cookies + localStorage so the next run reuses this session and
+  // Amazon treats the device as trusted, avoiding a repeat 2FA prompt.
+  async saveState(): Promise<void> {
+    if (!this.context) {
+      return;
+    }
+
+    try {
+      if (!fs.existsSync(STATE_DIR)) {
+        fs.mkdirSync(STATE_DIR, { recursive: true });
+      }
+      await this.context.storageState({ path: STATE_PATH });
+      console.log('💾 Saved Amazon session for future runs');
+    } catch (error) {
+      console.error('Error saving Amazon session state:', error);
     }
   }
 
