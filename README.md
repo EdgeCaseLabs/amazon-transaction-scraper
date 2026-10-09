@@ -2,6 +2,12 @@
 
 A TypeScript-based tool to scrape Amazon transaction data and generate human-readable HTML reports with product images and order screenshots.
 
+> **Reconciling Amazon purchases against YNAB?** This scraper pairs with the
+> [YNAB MCP server](https://github.com/EdgeCaseLabs/ynab-mcp) and the
+> `amazon-ynab-correlator` skill to match orders to YNAB transactions and write
+> memos automatically. See **[SETUP.md](SETUP.md)** for the full end-to-end
+> install (both servers + Claude Desktop config).
+
 ## Features
 
 - **Secure Authentication**: Handles Amazon login with 2FA support
@@ -17,6 +23,13 @@ A TypeScript-based tool to scrape Amazon transaction data and generate human-rea
 - **Date Filtering**: Specify custom date ranges (default: 90 days)
 - **TypeScript**: Full type safety and modern development experience
 
+## Prerequisites
+
+- **Node.js 20+** and **pnpm** (`npm install -g pnpm`)
+- Playwright browser (installed below)
+- An **Anthropic API key** (used for AI order summaries; required for the MCP path)
+- *(Optional)* **1Password CLI** (`op`) if you store credentials as `op://` references
+
 ## Installation
 
 ```bash
@@ -25,6 +38,9 @@ pnpm install
 
 # Install Playwright browsers
 pnpm exec playwright install
+
+# Build (required before running the MCP server)
+pnpm run build
 ```
 
 ## Usage
@@ -96,6 +112,60 @@ For secure credential management without manual entry:
 
 **Note:** Password is prompted securely at runtime and will not appear in bash history.
 
+## MCP Server (Claude Desktop / Claude Code)
+
+The scraper can run as an [MCP](https://modelcontextprotocol.io) server, exposing
+a `scrape_amazon_transactions` tool that AI clients (and the
+`amazon-ynab-correlator` skill) call directly.
+
+```bash
+# Build first, then run the MCP server over stdio
+pnpm run build
+pnpm run mcp          # = node dist/mcp-server.js
+```
+
+Credentials are read from environment variables (`AMAZON_EMAIL`,
+`AMAZON_PASSWORD`, optional `AMAZON_OTP`, and `ANTHROPIC_API_KEY`). Each value may
+be a **plaintext value** or a **1Password `op://` reference** — anything not
+starting with `op://` is used as-is.
+
+To register it in **Claude Desktop**, add a server under `mcpServers` in
+`~/Library/Application Support/Claude/claude_desktop_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "amazon-transaction-scraper": {
+      "command": "/absolute/path/to/node",
+      "args": ["/absolute/path/to/amazon-transaction-scraper/dist/mcp-server.js"],
+      "env": {
+        "AMAZON_EMAIL": "op://vault/amazon/username",
+        "AMAZON_PASSWORD": "op://vault/amazon/password",
+        "ANTHROPIC_API_KEY": "op://vault/anthropic/api_key"
+      }
+    }
+  }
+}
+```
+
+> Use plaintext values here instead of `op://` refs if you don't use 1Password.
+> The config file then holds secrets in plaintext — protect it accordingly.
+
+For the complete multi-server setup (YNAB MCP + Filesystem MCP + the correlator
+skill), see **[SETUP.md](SETUP.md)**.
+
+## Authentication & Sessions
+
+- **First login must be visible.** Amazon requires 2FA, so the first run opens a
+  **visible browser even when `headless: true`** — approve the 2FA/passkey prompt
+  once. The session is then saved to `.auth/amazon-state.json`.
+- **Later runs reuse the session** and can run headless/unattended until Amazon
+  expires it. When that happens, run a visible scrape again to re-seed `.auth/`.
+- **Passkeys are declined automatically.** The scraper clicks past Amazon's
+  "Use your passkey" page (choosing "Enter your password"), so you are never
+  forced to register or use a passkey.
+- `.auth/` is gitignored (it holds session cookies).
+
 ## Development
 
 ### Build
@@ -113,7 +183,7 @@ pnpm run dev
 ## Output Structure
 
 ```
-amazon-scraper/
+amazon-transaction-scraper/
 ├── output/
 │   ├── data/           # JSON data files
 │   ├── screenshots/    # Order screenshots  
@@ -203,8 +273,13 @@ The tool creates a `config.json` file with default settings:
 - Never commit your credentials to version control
 - Password is prompted securely and masked with asterisks
 - Passwords do not appear in command history or process lists
-- The tool runs with non-headless browser by default for security verification
-- 2FA is fully supported
+- 2FA is fully supported; see **Authentication & Sessions** above for how the
+  first-run visible login and saved session work
+- `.env`, `.password`, and `.auth/` are gitignored. `.password` is an optional
+  local file some flows read a password from — treat it as a secret and never
+  commit or share it
+- When sharing this project, do so via a **fresh `git clone`**, not by copying
+  your working folder (which may contain live credentials)
 
 ### Limitations
 

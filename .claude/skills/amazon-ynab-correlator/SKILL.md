@@ -24,7 +24,7 @@ From the filtered YNAB transactions:
 - Find the newest transaction date
 - Add 5 days buffer on each end to account for processing delays
 
-Use amazon-scraper:scrape_amazon_transactions
+Use amazon-transaction-scraper:scrape_amazon_transactions
 {
   "startDate": "<oldest_date - 5 days>",
   "endDate": "<newest_date + 5 days>"
@@ -81,6 +81,6 @@ Memo format: "[{order_id}] {item_description}"
 - Include item quantity if >1
 
 ## Error Handling
-- If amazon-scraper:scrape_amazon_transactions fails, ask to retry or use Filesystem:read_text_file with manual path
+- If amazon-transaction-scraper:scrape_amazon_transactions fails, ask to retry or use Filesystem:read_text_file with manual path
 - If no unapproved Amazon transactions found, report this and stop early
 - If correlation finds no matches, report unmatched YNAB transactions for manual review
