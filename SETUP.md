@@ -37,8 +37,8 @@ The correlator skill asks Claude to:
 4. Match them and write memos back to YNAB.
 
 Because the skill calls tools by name, **the MCP server keys in your config must
-be exactly `amazon-transaction-scraper` and `ynab`** (see below), and a **Filesystem MCP** is
-required so Claude can read the scraper's output file.
+be exactly `amazon-transaction-scraper` and `ynab`** (see below). Claude Desktop
+reads the scraper's output file directly — no extra config needed.
 
 ---
 
@@ -225,30 +225,21 @@ which uv      # e.g. /Users/you/.local/bin/uv
         "YNAB_API_KEY": "your_ynab_api_key_here",
         "DEFAULT_BUDGET_ID": ""
       }
-    },
-    "filesystem": {
-      "command": "npx",
-      "args": [
-        "-y",
-        "@modelcontextprotocol/server-filesystem",
-        "/Users/you/code/amazon-transaction-scraper/output"
-      ]
     }
   }
 }
 ```
 
 Notes:
-- **Server keys matter.** The correlator skill calls `amazon-transaction-scraper:…`,
-  `ynab:…`, and `Filesystem:read_text_file`. Keep the keys `amazon-transaction-scraper`,
-  `ynab`, and `filesystem` as shown.
+- **Server keys matter.** The correlator skill calls `amazon-transaction-scraper:…`
+  and `ynab:…`. Keep those keys exactly as shown.
+- **`OP_ACCOUNT`** is your 1Password account shorthand (default `"my"`). Omit it
+  if you're not using `op://` refs.
 - **Plaintext alternative:** instead of `op://…` refs in the `env` block, you
   can paste the literal values (`"AMAZON_EMAIL": "you@example.com"`, etc.). The
   config file then contains secrets in plaintext — protect it accordingly.
 - If you use `op://` refs, 1Password must be signed in (`op signin`) in the
   environment Claude Desktop launches from. Plaintext avoids that dependency.
-- The `filesystem` server is scoped to the scraper's `output/` directory so
-  Claude can read the JSON the scraper writes.
 
 Restart Claude Desktop after editing.
 
@@ -292,8 +283,8 @@ your confirmation for lower-confidence matches) write memos back to YNAB.
 | "Use your passkey" page blocks login | Handled automatically; if Amazon changed the button text, the password link selector in `src/auth.ts` (`dismissPasskeyPrompt`) may need updating. |
 | "Missing credentials" from MCP | `AMAZON_EMAIL` / `AMAZON_PASSWORD` not set (or `op` not signed in). Check the `env` block in the Desktop config. |
 | "Missing ANTHROPIC_API_KEY" | The MCP path requires it for order summaries. Add it to the `env` block. |
-| Correlator can't read the output file | `filesystem` MCP missing or not scoped to `amazon-transaction-scraper/output`. |
-| Tools not found by the skill | MCP server keys must be `amazon-transaction-scraper`, `ynab`, `filesystem`. Restart Claude Desktop. |
+| Correlator can't read the output file | Rare — if Claude can't read the output JSON, add a `filesystem` MCP server (`npx -y @modelcontextprotocol/server-filesystem <repo>/output`) as a fallback. |
+| Tools not found by the skill | MCP server keys must be `amazon-transaction-scraper` and `ynab`. Restart Claude Desktop. |
 | YNAB `create_transaction` errors | Make sure ynab-mcp was installed **from source** (pinned SDK), not from PyPI. |
 
 ---

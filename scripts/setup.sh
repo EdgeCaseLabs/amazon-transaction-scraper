@@ -79,6 +79,7 @@ Paste this into: $CFG
       "command": "$NODE_BIN",
       "args": ["$REPO_DIR/dist/mcp-server.js"],
       "env": {
+        "OP_ACCOUNT": "my",
         "AMAZON_EMAIL": "op://vault/amazon/username",
         "AMAZON_PASSWORD": "op://vault/amazon/password",
         "ANTHROPIC_API_KEY": "op://vault/anthropic/api_key"
@@ -88,15 +89,14 @@ Paste this into: $CFG
       "command": "$UV_BIN",
       "args": ["run", "--directory", "$YNAB_PATH", "python", "-m", "ynab_mcp_server"],
       "env": { "YNAB_API_KEY": "your_ynab_api_key_here", "DEFAULT_BUDGET_ID": "" }
-    },
-    "filesystem": {
-      "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server-filesystem", "$REPO_DIR/output"]
     }
   }
 }
 
-(Replace op:// refs with plaintext values if you don't use 1Password.)
+Notes:
+- Replace op:// refs with plaintext values if you don't use 1Password.
+- OP_ACCOUNT is your 1Password account shorthand (default "my"); omit it if not using op:// refs.
+- Claude Desktop reads the scraper's output file directly; no filesystem server needed.
 JSON
 
 # --- 7. Remaining manual steps -----------------------------------------------

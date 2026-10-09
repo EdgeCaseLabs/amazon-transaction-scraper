@@ -139,6 +139,7 @@ To register it in **Claude Desktop**, add a server under `mcpServers` in
       "command": "/absolute/path/to/node",
       "args": ["/absolute/path/to/amazon-transaction-scraper/dist/mcp-server.js"],
       "env": {
+        "OP_ACCOUNT": "my",
         "AMAZON_EMAIL": "op://vault/amazon/username",
         "AMAZON_PASSWORD": "op://vault/amazon/password",
         "ANTHROPIC_API_KEY": "op://vault/anthropic/api_key"
@@ -151,8 +152,8 @@ To register it in **Claude Desktop**, add a server under `mcpServers` in
 > Use plaintext values here instead of `op://` refs if you don't use 1Password.
 > The config file then holds secrets in plaintext — protect it accordingly.
 
-For the complete multi-server setup (YNAB MCP + Filesystem MCP + the correlator
-skill), see **[SETUP.md](SETUP.md)**.
+For the complete setup (YNAB MCP server + the correlator skill), see
+**[SETUP.md](SETUP.md)**.
 
 ## Authentication & Sessions
 
