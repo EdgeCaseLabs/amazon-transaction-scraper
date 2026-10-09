@@ -2,11 +2,20 @@
 
 A TypeScript-based tool to scrape Amazon transaction data and generate human-readable HTML reports with product images and order screenshots.
 
-> **Reconciling Amazon purchases against YNAB?** This scraper pairs with the
-> [YNAB MCP server](https://github.com/EdgeCaseLabs/ynab-mcp) and the
-> `amazon-ynab-correlator` skill to match orders to YNAB transactions and write
-> memos automatically. See **[SETUP.md](SETUP.md)** for the full end-to-end
-> install (both servers + Claude Desktop config).
+## Setup — Amazon ↔ YNAB reconciliation (primary use case)
+
+The main use case: run the scraper as an [MCP](https://modelcontextprotocol.io)
+server (`scrape_amazon_transactions` tool) alongside the
+[YNAB MCP server](https://github.com/EdgeCaseLabs/ynab-mcp) and the
+`amazon-ynab-correlator` skill, so Claude matches Amazon orders to YNAB
+transactions and writes memos automatically.
+
+**→ Follow [SETUP.md](SETUP.md) for the full end-to-end install** (both MCP
+servers, Claude Desktop config, credentials, first-run 2FA). Fastest path:
+`make setup`.
+
+Prefer running the scraper on its own from the terminal? See
+[Standalone (CLI) usage](#standalone-cli-usage) below.
 
 ## Features
 
@@ -23,14 +32,30 @@ A TypeScript-based tool to scrape Amazon transaction data and generate human-rea
 - **Date Filtering**: Specify custom date ranges (default: 90 days)
 - **TypeScript**: Full type safety and modern development experience
 
-## Prerequisites
+## Authentication & Sessions
+
+- **First login must be visible.** Amazon requires 2FA, so the first run opens a
+  **visible browser even when `headless: true`** — approve the 2FA/passkey prompt
+  once. The session is then saved to `.auth/amazon-state.json`.
+- **Later runs reuse the session** and can run headless/unattended until Amazon
+  expires it. When that happens, run a visible scrape again to re-seed `.auth/`.
+- **Passkeys are declined automatically.** The scraper clicks past Amazon's
+  "Use your passkey" page (choosing "Enter your password"), so you are never
+  forced to register or use a passkey.
+- `.auth/` is gitignored (it holds session cookies).
+
+## Standalone (CLI) usage
+
+Run the scraper by itself from the terminal, without any MCP/YNAB integration.
+
+### Prerequisites
 
 - **Node.js 20+** and **pnpm** (`npm install -g pnpm`)
 - Playwright browser (installed below)
-- An **Anthropic API key** (used for AI order summaries; required for the MCP path)
+- An **Anthropic API key** (used for AI order summaries)
 - *(Optional)* **1Password CLI** (`op`) if you store credentials as `op://` references
 
-## Installation
+### Installation
 
 ```bash
 # Install dependencies
@@ -39,13 +64,11 @@ pnpm install
 # Install Playwright browsers
 pnpm exec playwright install
 
-# Build (required before running the MCP server)
+# Build
 pnpm run build
 ```
 
-## Usage
-
-### Scrape Transactions
+### Scrape transactions
 
 ```bash
 # Basic usage (password will be prompted securely)
@@ -58,32 +81,26 @@ pnpm start -- -e your@email.com -d 30
 pnpm start -- -e your@email.com -o quarterly-report
 ```
 
-### Generate HTML from Existing JSON
+### Generate HTML from existing JSON
 
 ```bash
 pnpm start -- --generate output/data/transactions-2024-07-05.json
 ```
 
-### Using 1Password CLI (Optional)
+### Using 1Password CLI (optional)
 
 For secure credential management without manual entry:
 
 1. **Setup 1Password CLI**:
    ```bash
-   # Install 1Password CLI
    brew install 1password-cli
-
-   # Sign in
    op signin
    ```
 
 2. **Create .env file**:
    ```bash
-   # Copy the sample
    cp .env.sample .env
-
-   # Edit with your 1Password references
-   nano .env
+   # edit with your 1Password references
    ```
 
 3. **Example .env with 1Password references**:
@@ -99,10 +116,10 @@ For secure credential management without manual entry:
 4. **Run without prompts**:
    ```bash
    pnpm start -- -d 15
-   # Credentials are automatically fetched from 1Password!
+   # credentials are fetched from 1Password
    ```
 
-### Command Line Options
+### Command-line options
 
 - `-e, --email <email>`: Amazon account email
 - `-d, --days <number>`: Number of days to scrape (default: 90)
@@ -111,61 +128,6 @@ For secure credential management without manual entry:
 - `-h, --help`: Show help message
 
 **Note:** Password is prompted securely at runtime and will not appear in bash history.
-
-## MCP Server (Claude Desktop / Claude Code)
-
-The scraper can run as an [MCP](https://modelcontextprotocol.io) server, exposing
-a `scrape_amazon_transactions` tool that AI clients (and the
-`amazon-ynab-correlator` skill) call directly.
-
-```bash
-# Build first, then run the MCP server over stdio
-pnpm run build
-pnpm run mcp          # = node dist/mcp-server.js
-```
-
-Credentials are read from environment variables (`AMAZON_EMAIL`,
-`AMAZON_PASSWORD`, optional `AMAZON_OTP`, and `ANTHROPIC_API_KEY`). Each value may
-be a **plaintext value** or a **1Password `op://` reference** — anything not
-starting with `op://` is used as-is.
-
-To register it in **Claude Desktop**, add a server under `mcpServers` in
-`~/Library/Application Support/Claude/claude_desktop_config.json`:
-
-```json
-{
-  "mcpServers": {
-    "amazon-transaction-scraper": {
-      "command": "/absolute/path/to/node",
-      "args": ["/absolute/path/to/amazon-transaction-scraper/dist/mcp-server.js"],
-      "env": {
-        "OP_ACCOUNT": "my",
-        "AMAZON_EMAIL": "op://vault/amazon/username",
-        "AMAZON_PASSWORD": "op://vault/amazon/password",
-        "ANTHROPIC_API_KEY": "op://vault/anthropic/api_key"
-      }
-    }
-  }
-}
-```
-
-> Use plaintext values here instead of `op://` refs if you don't use 1Password.
-> The config file then holds secrets in plaintext — protect it accordingly.
-
-For the complete setup (YNAB MCP server + the correlator skill), see
-**[SETUP.md](SETUP.md)**.
-
-## Authentication & Sessions
-
-- **First login must be visible.** Amazon requires 2FA, so the first run opens a
-  **visible browser even when `headless: true`** — approve the 2FA/passkey prompt
-  once. The session is then saved to `.auth/amazon-state.json`.
-- **Later runs reuse the session** and can run headless/unattended until Amazon
-  expires it. When that happens, run a visible scrape again to re-seed `.auth/`.
-- **Passkeys are declined automatically.** The scraper clicks past Amazon's
-  "Use your passkey" page (choosing "Enter your password"), so you are never
-  forced to register or use a passkey.
-- `.auth/` is gitignored (it holds session cookies).
 
 ## Development
 
