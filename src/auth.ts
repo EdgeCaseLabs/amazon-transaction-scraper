@@ -18,12 +18,22 @@ class AmazonAuth {
   }
 
   async init(): Promise<void> {
+    const hasSavedState = fs.existsSync(STATE_PATH);
+
+    // First-time login needs a human to approve 2FA, which is impossible in a
+    // headless window. Force headed until a session is saved; honor the config
+    // flag only once a trusted session exists.
+    const wantHeadless = config.get('scraping.headless');
+    const headless = wantHeadless && hasSavedState;
+    if (wantHeadless && !hasSavedState) {
+      console.log('👀 No saved Amazon session yet — launching visible browser so you can approve 2FA once. Later runs go headless.');
+    }
+
     this.browser = await chromium.launch({
-      headless: config.get('scraping.headless'),
+      headless,
       slowMo: 100
     });
 
-    const hasSavedState = fs.existsSync(STATE_PATH);
     if (hasSavedState) {
       console.log('🔓 Reusing saved Amazon session (skips 2FA when still valid)');
     }
@@ -75,6 +85,10 @@ class AmazonAuth {
       const currentUrl = this.page.url();
       console.log(`Current URL: ${currentUrl}`);
 
+      // Amazon may land straight on the "Use your passkey" page (email already
+      // known) without an email input. Click through to password first.
+      await this.dismissPasskeyPrompt();
+
       // Check if we're redirected to sign-in or if there's an auth form on the page
       const emailInput = await this.page.$('#ap_email');
       const emailInputAlt = await this.page.$('input[name="email"]');
@@ -96,6 +110,11 @@ class AmazonAuth {
             await this.page.waitForTimeout(2000);
           }
         }
+
+        // Amazon may show a "Use your passkey" interstitial before the password
+        // field. It offers "Enter your password" / "Sign in another way" — click
+        // through to the password flow so the scraper isn't stuck on passkey.
+        await this.dismissPasskeyPrompt();
 
         // Wait for password field
         const passwordInput = await this.page.waitForSelector('#ap_password, input[name="password"], input[type="password"]', { timeout: 10000 });
@@ -332,6 +351,40 @@ class AmazonAuth {
       console.log(`Screenshot saved: ${filename}`);
     } catch (error) {
       console.error('Error taking screenshot:', error);
+    }
+  }
+
+  // Click past Amazon's "Use your passkey" interstitial to the password flow.
+  // Tries "Enter your password" first, then "Sign in another way" as a fallback.
+  // No-op when the passkey page isn't shown.
+  async dismissPasskeyPrompt(): Promise<void> {
+    if (!this.page) {
+      return;
+    }
+
+    const passwordLinkSelectors = [
+      'a:has-text("Enter your password")',
+      'button:has-text("Enter your password")',
+      'input[aria-label="Enter your password"]',
+      '#ap-passkey-fallback-link',
+    ];
+
+    for (const selector of passwordLinkSelectors) {
+      const link = await this.page.$(selector);
+      if (link) {
+        console.log('🔑 Passkey prompt detected — choosing password sign-in');
+        await link.click();
+        await this.page.waitForTimeout(2000);
+        return;
+      }
+    }
+
+    // Fallback: "Sign in another way" opens a method chooser that includes password.
+    const anotherWay = await this.page.$('a:has-text("Sign in another way"), button:has-text("Sign in another way")');
+    if (anotherWay) {
+      console.log('🔑 Passkey prompt detected — choosing "Sign in another way"');
+      await anotherWay.click();
+      await this.page.waitForTimeout(2000);
     }
   }
 

@@ -8,3 +8,4 @@ output/
 *.tar.gz
 .password
 settings.local.json
+.auth/
